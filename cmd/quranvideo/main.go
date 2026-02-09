@@ -73,7 +73,7 @@ func generateAudioCmd(args []string) {
 	surah := fs.Int("surah", 0, "Optional surah number (1-114)")
 	startAyah := fs.Int("start", 0, "Optional start ayah")
 	endAyah := fs.Int("end", 0, "Optional end ayah")
-	mode := fs.String("mode", "sequential", "Display mode: sequential|word-by-word")
+	mode := fs.String("mode", "sequential", "Display mode: sequential|repeat|repeat-2x2|word-by-word")
 	output := fs.String("output", "", "Output video path")
 	configPath := fs.String("config", "", "Config file path")
 	translation := fs.Bool("translation", true, "Include translation overlay")
@@ -316,21 +316,32 @@ func runGenerate(opts generateOptions) error {
 		return err
 	}
 	mode := strings.ToLower(opts.Mode)
-	if mode == "word-by-word" || mode == "word" || mode == "two-by-two" || mode == "two" || mode == "pair" || mode == "2x2" {
+	repeatPairs := isRepeatPairsMode(mode)
+	if isRepeatMode(mode) && opts.AudioPath != "" {
+		repeatTimings, err := buildRepeatTimings(ctx, verses, audioPath, audioDuration, cfg.Audio, logger, repeatPairs)
+		if err != nil {
+			logger.Warnf("Repeat mode failed: %v; falling back to sequential", err)
+			mode = "sequential"
+			opts.Mode = "sequential"
+		} else {
+			timings = repeatTimings
+		}
+	}
+	if !repeatPairs && (mode == "word-by-word" || mode == "word" || mode == "two-by-two" || mode == "two" || mode == "pair" || mode == "2x2") {
 		if opts.AudioPath != "" {
 			_ = applyWordAlignmentFullAudio(ctx, timings, audioPath, cfg.Audio, logger)
 		} else {
 			_ = applyWordAlignment(ctx, timings, segments, audioPath, cfg.Audio, logger)
 		}
 	}
-	if opts.AudioPath != "" && strings.EqualFold(opts.Mode, "sequential") {
+	if opts.AudioPath != "" && mode == "sequential" {
 		if applyWordAlignmentFullAudio(ctx, timings, audioPath, cfg.Audio, logger) {
 			if applyAyahBoundariesFromWordTimings(timings) {
 				logger.Infof("Aligned ayah boundaries to recitation audio")
 			}
 		}
 	}
-	if strings.EqualFold(opts.Mode, "sequential") && cfg.Audio.PauseSensitive {
+	if mode == "sequential" && cfg.Audio.PauseSensitive {
 		ensureWordTimings(ctx, opts.AudioPath != "", timings, segments, audioPath, cfg.Audio, logger)
 		silences, err := audio.DetectSilences(ctx, audioPath, cfg.Audio.PauseDB, cfg.Audio.PauseSec)
 		if err != nil {
@@ -338,7 +349,7 @@ func runGenerate(opts generateOptions) error {
 		} else if len(silences) > 0 {
 			timings = splitTimingsOnSilence(timings, silences, 120*time.Millisecond)
 		}
-	} else if strings.EqualFold(opts.Mode, "sequential") {
+	} else if mode == "sequential" {
 		ensureContinuousTimings(timings, audioDuration)
 	}
 
@@ -659,6 +670,24 @@ func applyWordAlignmentFullAudio(ctx context.Context, timings []render.Timing, a
 	}
 	applyWordOffset(timings, computeWordOffset(ctx, audioPath, timings, cfg, logger))
 	return true
+}
+
+func isRepeatMode(mode string) bool {
+	switch strings.ToLower(mode) {
+	case "repeat", "sequential-repeat", "repeat-2x2", "repeat-two-by-two", "repeat-pair":
+		return true
+	default:
+		return false
+	}
+}
+
+func isRepeatPairsMode(mode string) bool {
+	switch strings.ToLower(mode) {
+	case "repeat-2x2", "repeat-two-by-two", "repeat-pair":
+		return true
+	default:
+		return false
+	}
 }
 
 func ensureWordTimings(ctx context.Context, useFullAudio bool, timings []render.Timing, segments []audio.Segment, audioPath string, cfg config.AudioConfig, logger *utils.Logger) {
@@ -1060,6 +1089,502 @@ func filterSegments(segments []segment, minSegment time.Duration) []segment {
 		out = append(out, seg)
 	}
 	return out
+}
+
+type ayahTokens struct {
+	verse quran.Verse
+	words []string
+	norm  []string
+}
+
+type ayahMatch struct {
+	start    int
+	end      int
+	matches  int
+	length   int
+	score    int
+	coverage float64
+}
+
+func buildRepeatTimings(ctx context.Context, verses []quran.Verse, audioPath string, audioDuration time.Duration, cfg config.AudioConfig, logger *utils.Logger, withWordTimings bool) ([]render.Timing, error) {
+	aligner := align.NewWhisperAligner(cfg.WhisperCmd)
+	if !aligner.Available() {
+		return nil, fmt.Errorf("whisper not available")
+	}
+	whisperWords, err := aligner.TranscribeWords(audioPath, cfg.Language)
+	if err != nil {
+		return nil, err
+	}
+	if len(whisperWords) == 0 {
+		return nil, fmt.Errorf("no whisper words")
+	}
+	if audioDuration <= 0 {
+		audioDuration = whisperWords[len(whisperWords)-1].End
+	}
+	silences, err := audio.DetectSilences(ctx, audioPath, cfg.PauseDB, cfg.PauseSec)
+	if err != nil {
+		logger.Warnf("Repeat mode silence detection failed: %v", err)
+	}
+	segments := []segment{{start: 0, end: audioDuration}}
+	if len(silences) > 0 {
+		segments = segmentsFromSilence(render.Timing{Start: 0, End: audioDuration}, silences)
+		segments = filterSegments(segments, 120*time.Millisecond)
+		if len(segments) == 0 {
+			segments = []segment{{start: 0, end: audioDuration}}
+		}
+	}
+
+	ayahs := make([]ayahTokens, 0, len(verses))
+	for _, v := range verses {
+		words := strings.Fields(v.Text)
+		norm := make([]string, 0, len(words))
+		for _, w := range words {
+			n := align.NormalizeWord(w)
+			if n == "" {
+				norm = append(norm, "")
+				continue
+			}
+			norm = append(norm, n)
+		}
+		ayahs = append(ayahs, ayahTokens{verse: v, words: words, norm: norm})
+	}
+
+	var timings []render.Timing
+	current := 0
+	for _, seg := range segments {
+		segWords := wordsInSegment(whisperWords, seg)
+		if len(segWords) == 0 {
+			continue
+		}
+		segTokens := normalizeSegmentTokens(segWords)
+		if len(segTokens) == 0 {
+			continue
+		}
+		bestIdx, bestMatch := selectBestAyahMatch(segTokens, ayahs, current)
+		if bestIdx < 0 {
+			continue
+		}
+		if bestIdx > current {
+			current = bestIdx
+		}
+		text, full := renderAyahMatchText(ayahs[bestIdx], bestMatch)
+		verse := ayahs[bestIdx].verse
+		if text != "" {
+			verse.Text = text
+		}
+		if !full {
+			verse.Translation = ""
+		}
+		start := segWords[0].Start
+		end := segWords[len(segWords)-1].End
+		if end < start {
+			end = start
+		}
+		var wordTimings []render.WordTiming
+		if withWordTimings {
+			words := ayahs[bestIdx].words
+			ws := sliceAyahWords(words, bestMatch.start, bestMatch.end)
+			if len(ws) == 0 {
+				ws = strings.Fields(verse.Text)
+			}
+			wordTimings = mapSegmentWordTimings(ws, segWords)
+		}
+		timings = append(timings, render.Timing{
+			Verse:       verse,
+			Start:       start,
+			End:         end,
+			WordTimings: wordTimings,
+		})
+	}
+	if len(timings) == 0 {
+		return nil, fmt.Errorf("no repeat timings produced")
+	}
+	return timings, nil
+}
+
+func wordsInSegment(words []align.WordTiming, seg segment) []align.WordTiming {
+	out := make([]align.WordTiming, 0, len(words))
+	for _, w := range words {
+		mid := w.Start + (w.End-w.Start)/2
+		if mid >= seg.start && mid <= seg.end {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+func normalizeSegmentTokens(words []align.WordTiming) []string {
+	out := make([]string, 0, len(words))
+	for _, w := range words {
+		n := align.NormalizeWord(w.Word)
+		if n == "" {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+func selectBestAyahMatch(tokens []string, ayahs []ayahTokens, current int) (int, ayahMatch) {
+	bestIdx := -1
+	var best ayahMatch
+	if current < 0 {
+		current = 0
+	}
+	candIdx := current
+	if candIdx < len(ayahs) {
+		if m, ok := matchSegmentToAyah(tokens, ayahs[candIdx]); ok {
+			bestIdx = candIdx
+			best = m
+		}
+	}
+	nextIdx := current + 1
+	if nextIdx < len(ayahs) {
+		if m, ok := matchSegmentToAyah(tokens, ayahs[nextIdx]); ok {
+			if bestIdx == -1 || isBetterMatch(m, best) {
+				bestIdx = nextIdx
+				best = m
+			}
+		}
+	}
+	return bestIdx, best
+}
+
+func matchSegmentToAyah(tokens []string, ayah ayahTokens) (ayahMatch, bool) {
+	if len(tokens) == 0 || len(ayah.norm) == 0 {
+		return ayahMatch{}, false
+	}
+	start, end, matches, length, score := localAlignTokens(tokens, ayah.norm)
+	if matches == 0 || start < 0 || end < 0 {
+		return ayahMatch{}, false
+	}
+	coverage := float64(matches) / float64(len(tokens))
+	minMatches := 1
+	if len(tokens) >= 4 {
+		minMatches = 2
+	}
+	if matches < minMatches && coverage < 0.2 {
+		return ayahMatch{}, false
+	}
+	return ayahMatch{start: start, end: end, matches: matches, length: length, score: score, coverage: coverage}, true
+}
+
+func isBetterMatch(a, b ayahMatch) bool {
+	if a.matches != b.matches {
+		return a.matches > b.matches
+	}
+	if a.coverage != b.coverage {
+		return a.coverage > b.coverage
+	}
+	if a.score != b.score {
+		return a.score > b.score
+	}
+	return a.length > b.length
+}
+
+func renderAyahMatchText(ayah ayahTokens, match ayahMatch) (string, bool) {
+	if len(ayah.words) == 0 {
+		return "", false
+	}
+	start := match.start
+	end := match.end
+	if start < 0 {
+		start = 0
+	}
+	if end >= len(ayah.words) {
+		end = len(ayah.words) - 1
+	}
+	if end < start {
+		return "", false
+	}
+	full := start == 0 && end == len(ayah.words)-1
+	return strings.Join(ayah.words[start:end+1], " "), full
+}
+
+func sliceAyahWords(words []string, start, end int) []string {
+	if len(words) == 0 {
+		return nil
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end >= len(words) {
+		end = len(words) - 1
+	}
+	if end < start {
+		return nil
+	}
+	return words[start : end+1]
+}
+
+func mapSegmentWordTimings(words []string, segWords []align.WordTiming) []render.WordTiming {
+	if len(words) == 0 || len(segWords) == 0 {
+		return nil
+	}
+	start := segWords[0].Start
+	end := segWords[len(segWords)-1].End
+	if end < start {
+		end = start
+	}
+	if len(words) == len(segWords) {
+		out := make([]render.WordTiming, len(words))
+		for i := range words {
+			out[i] = render.WordTiming{Word: words[i], Start: segWords[i].Start, End: segWords[i].End}
+		}
+		return out
+	}
+	ayahNorm := make([]string, 0, len(words))
+	for _, w := range words {
+		ayahNorm = append(ayahNorm, align.NormalizeWord(w))
+	}
+	segNorm := make([]string, 0, len(segWords))
+	for _, w := range segWords {
+		segNorm = append(segNorm, align.NormalizeWord(w.Word))
+	}
+	pairs := lcsIndexPairs(ayahNorm, segNorm)
+	if len(pairs) == 0 {
+		return evenSplitWordTimings(words, start, end)
+	}
+	out := make([]render.WordTiming, len(words))
+	matched := make([]bool, len(words))
+	for _, p := range pairs {
+		if p.i < 0 || p.i >= len(words) || p.j < 0 || p.j >= len(segWords) {
+			continue
+		}
+		out[p.i] = render.WordTiming{Word: words[p.i], Start: segWords[p.j].Start, End: segWords[p.j].End}
+		matched[p.i] = true
+	}
+	fillMissingWordTimings(out, matched, start, end)
+	return out
+}
+
+func evenSplitWordTimings(words []string, start, end time.Duration) []render.WordTiming {
+	if len(words) == 0 || end <= start {
+		return nil
+	}
+	per := (end - start) / time.Duration(len(words))
+	if per <= 0 {
+		return nil
+	}
+	out := make([]render.WordTiming, len(words))
+	cursor := start
+	for i := range words {
+		s := cursor
+		e := s + per
+		if i == len(words)-1 {
+			e = end
+		}
+		out[i] = render.WordTiming{Word: words[i], Start: s, End: e}
+		cursor = e
+	}
+	return out
+}
+
+type lcsPair struct{ i, j int }
+
+func lcsIndexPairs(a, b []string) []lcsPair {
+	n, m := len(a), len(b)
+	dp := make([][]int, n+1)
+	for i := range dp {
+		dp[i] = make([]int, m+1)
+	}
+	for i := 1; i <= n; i++ {
+		for j := 1; j <= m; j++ {
+			if a[i-1] != "" && a[i-1] == b[j-1] {
+				dp[i][j] = dp[i-1][j-1] + 1
+			} else if dp[i-1][j] >= dp[i][j-1] {
+				dp[i][j] = dp[i-1][j]
+			} else {
+				dp[i][j] = dp[i][j-1]
+			}
+		}
+	}
+	var pairs []lcsPair
+	i, j := n, m
+	for i > 0 && j > 0 {
+		if a[i-1] != "" && a[i-1] == b[j-1] {
+			pairs = append(pairs, lcsPair{i - 1, j - 1})
+			i--
+			j--
+		} else if dp[i-1][j] >= dp[i][j-1] {
+			i--
+		} else {
+			j--
+		}
+	}
+	for i, j := 0, len(pairs)-1; i < j; i, j = i+1, j-1 {
+		pairs[i], pairs[j] = pairs[j], pairs[i]
+	}
+	return pairs
+}
+
+func fillMissingWordTimings(timings []render.WordTiming, matched []bool, start, end time.Duration) {
+	if len(timings) == 0 {
+		return
+	}
+	lastMatched := -1
+	for i := 0; i < len(timings); i++ {
+		if matched[i] {
+			if i > lastMatched+1 {
+				fillWordGap(timings, matched, lastMatched, i, start, end)
+			}
+			lastMatched = i
+		}
+	}
+	if lastMatched < len(timings)-1 {
+		fillWordGap(timings, matched, lastMatched, len(timings), start, end)
+	}
+	for i := range timings {
+		if timings[i].End < timings[i].Start {
+			timings[i].End = timings[i].Start
+		}
+	}
+}
+
+func fillWordGap(timings []render.WordTiming, matched []bool, prevIdx, nextIdx int, start, end time.Duration) {
+	gapStart := start
+	gapEnd := end
+	if prevIdx >= 0 {
+		gapStart = timings[prevIdx].End
+	}
+	if nextIdx < len(timings) && matched[nextIdx] {
+		gapEnd = timings[nextIdx].Start
+	}
+	if gapEnd < gapStart {
+		gapEnd = gapStart
+	}
+	count := nextIdx - prevIdx - 1
+	if count <= 0 {
+		return
+	}
+	step := time.Duration(0)
+	if gapEnd > gapStart {
+		step = (gapEnd - gapStart) / time.Duration(count+1)
+	}
+	cursor := gapStart
+	for i := prevIdx + 1; i < nextIdx; i++ {
+		s := cursor + step
+		e := s + step
+		if step == 0 {
+			e = s
+		}
+		timings[i].Start = s
+		timings[i].End = e
+		matched[i] = true
+		cursor = e
+	}
+}
+
+type alignCell struct {
+	score   int
+	start   int
+	matches int
+	length  int
+}
+
+func localAlignTokens(needles []string, haystack []string) (startIdx, endIdx, matches, length, score int) {
+	n := len(needles)
+	m := len(haystack)
+	if n == 0 || m == 0 {
+		return -1, -1, 0, 0, 0
+	}
+	prev := make([]alignCell, m+1)
+	curr := make([]alignCell, m+1)
+	best := alignCell{}
+	bestEnd := -1
+	for i := 1; i <= n; i++ {
+		curr[0] = alignCell{}
+		for j := 1; j <= m; j++ {
+			matchScore := -1
+			if needles[i-1] != "" && needles[i-1] == haystack[j-1] {
+				matchScore = 2
+			}
+
+			var bestCell alignCell
+			bestCell.start = j - 1
+
+			diag := prev[j-1]
+			scoreDiag := diag.score + matchScore
+			if scoreDiag > 0 {
+				start := diag.start
+				if diag.score == 0 {
+					start = j - 1
+				}
+				cand := alignCell{
+					score:   scoreDiag,
+					start:   start,
+					matches: diag.matches + boolToInt(matchScore > 0),
+					length:  diag.length + 1,
+				}
+				bestCell = pickBestCell(bestCell, cand)
+			}
+
+			up := prev[j]
+			scoreUp := up.score - 1
+			if scoreUp > 0 {
+				start := up.start
+				if up.score == 0 {
+					start = j - 1
+				}
+				cand := alignCell{
+					score:   scoreUp,
+					start:   start,
+					matches: up.matches,
+					length:  up.length + 1,
+				}
+				bestCell = pickBestCell(bestCell, cand)
+			}
+
+			left := curr[j-1]
+			scoreLeft := left.score - 1
+			if scoreLeft > 0 {
+				start := left.start
+				if left.score == 0 {
+					start = j - 1
+				}
+				cand := alignCell{
+					score:   scoreLeft,
+					start:   start,
+					matches: left.matches,
+					length:  left.length + 1,
+				}
+				bestCell = pickBestCell(bestCell, cand)
+			}
+
+			if bestCell.score < 0 {
+				bestCell = alignCell{}
+				bestCell.start = j - 1
+			}
+			curr[j] = bestCell
+			if bestCell.score > best.score ||
+				(bestCell.score == best.score && bestCell.matches > best.matches) ||
+				(bestCell.score == best.score && bestCell.matches == best.matches && bestCell.length > best.length) {
+				best = bestCell
+				bestEnd = j - 1
+			}
+		}
+		prev, curr = curr, prev
+	}
+	if best.score == 0 || bestEnd < 0 {
+		return -1, -1, 0, 0, 0
+	}
+	return best.start, bestEnd, best.matches, best.length, best.score
+}
+
+func pickBestCell(current, cand alignCell) alignCell {
+	if cand.score > current.score ||
+		(cand.score == current.score && cand.matches > current.matches) ||
+		(cand.score == current.score && cand.matches == current.matches && cand.length > current.length) {
+		return cand
+	}
+	return current
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 func splitTimingBySegments(t render.Timing, segments []segment) []render.Timing {
