@@ -106,6 +106,60 @@ func (w *WhisperAligner) Align(audioPath string, words []string, language string
 	return nil, fmt.Errorf("unable to align %d words with %d whisper words", len(words), len(whisperWords))
 }
 
+func (w *WhisperAligner) TranscribeWords(audioPath string, language string) ([]WordTiming, error) {
+	if !w.Available() {
+		return nil, fmt.Errorf("whisper command not found: %s", w.Cmd)
+	}
+	if language == "" {
+		language = "ar"
+	}
+	outputDir, err := os.MkdirTemp("", "quranvideo-whisper-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(outputDir)
+
+	jsonPath := filepath.Join(outputDir, strings.TrimSuffix(filepath.Base(audioPath), filepath.Ext(audioPath))+".json")
+	baseArgs := []string{
+		"--language", language,
+		"--word_timestamps", "True",
+		"--output_format", "json",
+		"--output_dir", outputDir,
+		"--task", "transcribe",
+		audioPath,
+	}
+	advancedArgs := append([]string{}, baseArgs...)
+	advancedArgs = append(advancedArgs,
+		"--temperature", "0",
+		"--beam_size", "5",
+		"--best_of", "5",
+	)
+	if err := runWhisper(w.Cmd, advancedArgs); err != nil {
+		_ = os.Remove(jsonPath)
+		if err := runWhisper(w.Cmd, baseArgs); err != nil {
+			return nil, err
+		}
+	}
+
+	data, err := os.ReadFile(jsonPath)
+	if err != nil {
+		return nil, err
+	}
+	var result whisperResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	whisperWords := flattenWhisperWords(result)
+	if len(whisperWords) == 0 {
+		return nil, errors.New("no words found in whisper output")
+	}
+	out := make([]WordTiming, 0, len(whisperWords))
+	for _, w := range whisperWords {
+		out = append(out, WordTiming{Word: w.Word, Start: w.Start, End: w.End})
+	}
+	return out, nil
+}
+
 type whisperResult struct {
 	Segments []whisperSegment `json:"segments"`
 }
@@ -445,7 +499,7 @@ func fillWordGap(timings []WordTiming, assigned []bool, prevIdx, nextIdx int, fi
 }
 
 func normalizeForMatch(word string) string {
-	return strings.ReplaceAll(normalizeWord(word), " ", "")
+	return strings.ReplaceAll(NormalizeWord(word), " ", "")
 }
 
 func isClitic(norm string) bool {
@@ -656,6 +710,10 @@ func normalizeWord(word string) string {
 		b.WriteRune(unicode.ToLower(r))
 	}
 	return b.String()
+}
+
+func NormalizeWord(word string) string {
+	return normalizeWord(word)
 }
 
 func runWhisper(cmd string, args []string) error {
