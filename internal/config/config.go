@@ -384,7 +384,7 @@ func (c *Config) Validate() error {
 		}
 	}
 	switch strings.ToLower(c.Video.DisplayMode) {
-	case "sequential", "word-by-word", "two-by-two", "two", "pair", "2x2":
+	case "sequential", "repeat", "sequential-repeat", "repeat-2x2", "repeat-two-by-two", "repeat-pair", "word-by-word", "two-by-two", "two", "pair", "2x2":
 	default:
 		return fmt.Errorf("unsupported video.display_mode: %s", c.Video.DisplayMode)
 	}
