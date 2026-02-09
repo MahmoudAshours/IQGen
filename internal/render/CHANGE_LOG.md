@@ -92,3 +92,31 @@ These changes enhance the functionality of the text rendering system by providin
 - **Contributors:**
   - [Your Name] (Initial development)
 ```
+
+## 2026-02-09
+
+# Changelog
+
+## Version 0.1.0 - Initial Release
+
+### New Features
+- **Text Rendering**: Implemented text rendering with support for various display modes (e.g., word-by-word, verse-by-verse).
+- **Word Pairs**: Added functionality to display words as pairs with timing information.
+- **Subtitle Support**: Introduced subtitle rendering using ASS files.
+
+### Enhancements
+- **Configuration Options**: Expanded the configuration options for better customization of text position, font settings, and fade effects.
+- **Error Handling**: Improved error handling to provide more informative messages.
+
+### Bug Fixes
+- None reported in this initial release.
+
+## Version 0.2.0 - Minor Improvements
+
+### Enhancements
+- **Responsive Design**: Enhanced the responsiveness of the render output to better adapt to different screen sizes.
+- **Performance Tuning**: Optimized performance for larger inputs and more complex configurations.
+
+### Bug Fixes
+- Fixed an issue where the text rendering engine was not handling certain special characters correctly.
+- Resolved a bug in the subtitle parsing logic that caused incorrect timing in some cases.

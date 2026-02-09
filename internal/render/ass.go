@@ -91,27 +91,35 @@ func buildASSLines(opts assOptions, fontSize int) []string {
 			text := assVerseText(opts.Config, maxWidth, t.Verse.Text, t.Verse.Translation, opts.IncludeTranslation, fontSize)
 			lines = append(lines, assDialogue(t.Start, t.End, assFadeOverride(opts.Config), text))
 		}
-	case "word-by-word", "word", "two-by-two", "two", "pair", "2x2":
+	case "word-by-word", "word", "two-by-two", "two", "pair", "2x2", "repeat-2x2", "repeat-two-by-two", "repeat-pair":
 		for _, t := range opts.Timings {
-			if mode == "two-by-two" || mode == "two" || mode == "pair" || mode == "2x2" {
+			if mode == "two-by-two" || mode == "two" || mode == "pair" || mode == "2x2" || mode == "repeat-2x2" || mode == "repeat-two-by-two" || mode == "repeat-pair" {
 				for i := 0; i < len(t.WordTimings); i += 2 {
 					first := t.WordTimings[i]
-					text := escapeASSText(first.Word)
+					text := first.Word
 					end := first.End
 					if i+1 < len(t.WordTimings) {
 						second := t.WordTimings[i+1]
 						if second.Word != "" {
-							text = text + " " + escapeASSText(second.Word)
+							text = text + " " + second.Word
 						}
 						if second.End > end {
 							end = second.End
 						}
 					}
+					if opts.Config.Elongate {
+						text = elongateText(text, opts.Config.ElongateCount)
+					}
+					text = escapeASSText(text)
 					lines = append(lines, assDialogue(first.Start, end, assFadeOverride(opts.Config), text))
 				}
 			} else {
 				for _, w := range t.WordTimings {
-					text := escapeASSText(w.Word)
+					text := w.Word
+					if opts.Config.Elongate {
+						text = elongateText(text, opts.Config.ElongateCount)
+					}
+					text = escapeASSText(text)
 					lines = append(lines, assDialogue(w.Start, w.End, assFadeOverride(opts.Config), text))
 				}
 			}

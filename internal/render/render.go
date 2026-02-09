@@ -152,9 +152,9 @@ func buildDrawtextFilters(input RenderInput, width, height int) (string, error) 
 				filters = append(filters, DrawtextArgs(refFile, enable, input.VideoConfig, refSize, refColor, fmt.Sprintf("%s+%d", textY, refYOffset), fade))
 			}
 		}
-	case "word-by-word", "word", "two-by-two", "two", "pair", "2x2":
+	case "word-by-word", "word", "two-by-two", "two", "pair", "2x2", "repeat-2x2", "repeat-two-by-two", "repeat-pair":
 		for idx, t := range input.Timings {
-			if mode == "two-by-two" || mode == "two" || mode == "pair" || mode == "2x2" {
+			if mode == "two-by-two" || mode == "two" || mode == "pair" || mode == "2x2" || mode == "repeat-2x2" || mode == "repeat-two-by-two" || mode == "repeat-pair" {
 				pairs := buildWordPairs(t)
 				for widx, pair := range pairs {
 					if pair.End <= pair.Start || strings.TrimSpace(pair.Text) == "" {
@@ -162,7 +162,7 @@ func buildDrawtextFilters(input RenderInput, width, height int) (string, error) 
 					}
 					text := sanitizeText(pair.Text)
 					if input.VideoConfig.Elongate {
-						text = elongateText(text)
+						text = elongateText(text, input.VideoConfig.ElongateCount)
 					}
 					textFile, err := writeTextFile(input.TempDir, fmt.Sprintf("ayah_%d_pair_%d.txt", idx, widx), text)
 					if err != nil {
@@ -176,7 +176,7 @@ func buildDrawtextFilters(input RenderInput, width, height int) (string, error) 
 				for widx, w := range t.WordTimings {
 					word := sanitizeText(w.Word)
 					if input.VideoConfig.Elongate {
-						word = elongateText(word)
+						word = elongateText(word, input.VideoConfig.ElongateCount)
 					}
 					textFile, err := writeTextFile(input.TempDir, fmt.Sprintf("ayah_%d_word_%d.txt", idx, widx), word)
 					if err != nil {

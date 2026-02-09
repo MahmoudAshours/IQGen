@@ -30,9 +30,26 @@ func TestWrapTextDoesNotStartWithCombining(t *testing.T) {
 }
 
 func TestElongateTextUnderscore(t *testing.T) {
-	got := elongateText("ي__ا")
+	got := elongateText("ي__ا", 1)
 	if !strings.Contains(got, "ـ") {
 		t.Fatalf("expected tatweel, got %q", got)
+	}
+}
+
+func TestElongateTextUnderscoreMovesAfterArabic(t *testing.T) {
+	got := elongateText("_ك", 1)
+	if got != "كـ" {
+		t.Fatalf("expected kashida after letter, got %q", got)
+	}
+}
+
+func TestElongateTextSkipsNonConnectingLetter(t *testing.T) {
+	got := elongateText("أ__ب", 1)
+	if strings.Contains(got, "ـب") {
+		t.Fatalf("expected kashida after ب, got %q", got)
+	}
+	if !strings.Contains(got, "بـ") {
+		t.Fatalf("expected kashida after ب, got %q", got)
 	}
 }
 
