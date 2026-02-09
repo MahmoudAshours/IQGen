@@ -1,0 +1,84 @@
+quran_api:
+    base_url: https://api.alquran.cloud/v1
+    edition: quran-simple
+    translation: en.sahih
+    reciter: ar.shaatree
+    timeout_sec: 10
+audio:
+    cdn_base_url: https://cdn.islamic.network/quran/audio
+    bitrate_kbps: 128
+    max_concurrent: 3
+    word_timing: auto     # auto|whisper|even
+    pause_sensitive: true
+    pause_db: -35
+    pause_sec: 0.2
+    word_offset_ms: -10
+    whisper_cmd: whisper  # path if needed
+    language: ar
+background:
+    provider: pixabay
+    pixabay_base_url: https://pixabay.com/api/videos/
+    pixabay_api_key: { "PIXABAY_API_KEY" }
+    pexels_api_key: { "PEXELS_API_KEY" }
+    pexels_base_url: https://api.pexels.com/videos/search
+    orientation: portrait
+    exclude_people: true
+    min_duration_sec: 10
+    query_fallback: nature
+    per_ayah: true
+    use_ai: false
+    exclude_religious: true
+    use_context: false
+    random: true
+ai:
+  enabled: false
+  base_url: "http://localhost:11434"
+  model: "llama3.2:3b"
+video:
+    resolution: 1080x1920
+    normalize_text: false
+    display_mode: sequential
+    elongate: true
+    renderer: ass
+    translation_font: "Helvetica"
+    glass:
+      enabled: false
+      color: "#D7EAFD"
+      alpha: 0.35
+      padding: 12
+    font:
+      file: /Users/Library/Fonts/uthmany-regular.ttf
+      family: "uthmany"
+      size: 72
+      color: "#EFBF04"
+      outline_color: "#000000"
+      outline_width: 3
+      shadow_color: "#000000"
+      shadow_x: 2
+      shadow_y: 2
+    reference:
+        enabled: true
+        color: '#FFFFFF'
+        size: 28
+        y_offset: 80
+    background:
+        color: '#000000'
+    margins:
+        top: 140
+        bottom: 200
+        left: 120
+        right: 120
+    line_spacing: 13
+    text_position: center
+social:
+    enabled_platforms: []
+    default_tags:
+        - '#Quran'
+        - '#Islam'
+        - '#Reminder'
+output:
+    dir: ./output
+    temp_dir: ./output/tmp
+    captions: true
+logging:
+    level: debug
