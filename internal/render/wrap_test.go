@@ -39,17 +39,34 @@ func TestElongateTextUnderscore(t *testing.T) {
 func TestElongateTextUnderscoreMovesAfterArabic(t *testing.T) {
 	got := elongateText("_ك", 1)
 	if got != "كـ" {
-		t.Fatalf("expected kashida after letter, got %q", got)
+		t.Fatalf("expected kashida after ك, got %q", got)
 	}
 }
 
 func TestElongateTextSkipsNonConnectingLetter(t *testing.T) {
 	got := elongateText("أ__ب", 1)
-	if strings.Contains(got, "ـب") {
-		t.Fatalf("expected kashida after ب, got %q", got)
+	if strings.Contains(got, "أـ") {
+		t.Fatalf("expected no kashida after أ, got %q", got)
 	}
 	if !strings.Contains(got, "بـ") {
 		t.Fatalf("expected kashida after ب, got %q", got)
+	}
+}
+
+func TestElongateTextUnderscoreAfterEligible(t *testing.T) {
+	got := elongateText("ب__ك", 2)
+	if got != "بــــك" {
+		t.Fatalf("expected kashida after ب, got %q", got)
+	}
+}
+
+func TestElongateTextDoesNotJumpForward(t *testing.T) {
+	got := elongateText("ف__أكل", 1)
+	if strings.Contains(got, "أـ") {
+		t.Fatalf("expected no kashida after أ, got %q", got)
+	}
+	if !strings.HasPrefix(got, "فـ") {
+		t.Fatalf("expected kashida after ف, got %q", got)
 	}
 }
 
