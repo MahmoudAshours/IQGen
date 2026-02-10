@@ -86,6 +86,7 @@ type VideoConfig struct {
 	TranslationFont    string       `yaml:"translation_font"`
 	TranslationSpacing int          `yaml:"translation_spacing"`
 	Elongate           bool         `yaml:"elongate"`
+	ElongateCount      int          `yaml:"elongate_count"`
 	FadeInMs           int          `yaml:"fade_in_ms"`
 	FadeOutMs          int          `yaml:"fade_out_ms"`
 	Font               FontConfig   `yaml:"font"`
@@ -212,6 +213,7 @@ func Default() Config {
 			TranslationFont:    "Helvetica",
 			TranslationSpacing: 24,
 			Elongate:           false,
+			ElongateCount:      1,
 			FadeInMs:           120,
 			FadeOutMs:          120,
 			Font: FontConfig{
