@@ -227,8 +227,7 @@ func applyKashidaMarks(text string, count int) string {
 	kCount := normalizedElongateCount(count)
 	runes := []rune(text)
 	out := make([]rune, 0, len(runes))
-	lastArabic := -1
-	lastEligible := false
+	lastEligiblePos := -1
 	pending := 0
 	for i := 0; i < len(runes); {
 		r := runes[i]
@@ -238,8 +237,8 @@ func applyKashidaMarks(text string, count int) string {
 				run++
 				i++
 			}
-			if lastArabic >= 0 && lastEligible {
-				insertAt := lastArabic + 1
+			if lastEligiblePos >= 0 {
+				insertAt := lastEligiblePos + 1
 				for insertAt < len(out) && isCombining(out[insertAt]) {
 					insertAt++
 				}
@@ -249,29 +248,29 @@ func applyKashidaMarks(text string, count int) string {
 			}
 			continue
 		}
-		if pending > 0 && isArabicLetter(r) {
+		if isArabicLetter(r) {
 			out = append(out, r)
-			lastArabic = len(out) - 1
-			lastEligible = isKashidaEligible(r)
+			basePos := len(out) - 1
 			j := i + 1
 			for j < len(runes) && isCombining(runes[j]) {
 				out = append(out, runes[j])
 				j++
 			}
-			if lastEligible {
-				out = insertRunes(out, len(out), 'ـ', pending)
-				pending = 0
+			if isKashidaEligible(r) {
+				lastEligiblePos = basePos
+				if pending > 0 {
+					out = insertRunes(out, len(out), 'ـ', pending)
+					pending = 0
+				}
+			} else {
+				lastEligiblePos = -1
 			}
 			i = j
 			continue
 		}
-		if pending > 0 && unicode.IsSpace(r) {
-			pending = 0
-		}
 		out = append(out, r)
-		if isArabicLetter(r) {
-			lastArabic = len(out) - 1
-			lastEligible = isKashidaEligible(r)
+		if !isCombining(r) {
+			lastEligiblePos = -1
 		}
 		i++
 	}
