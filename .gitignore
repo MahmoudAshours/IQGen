@@ -2,3 +2,4 @@ output/
 *.mp3
 RALPH_TASK.md
 .ralph
+.DS_Store
