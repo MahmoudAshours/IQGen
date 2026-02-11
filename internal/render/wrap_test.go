@@ -24,7 +24,7 @@ func TestWrapTextDoesNotStartWithCombining(t *testing.T) {
 			if i == 0 && unicode.Is(unicode.Mn, r) {
 				t.Fatalf("line starts with combining mark: %q", line)
 			}
-			break
+
 		}
 	}
 }

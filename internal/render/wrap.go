@@ -9,7 +9,7 @@ import (
 
 const (
 	wrapThreshold = 0.98
-	avgCharWidth  = 0.60
+	avgCharWidth  = 0.8
 	avgSpaceWidth = 0.33
 )
 
