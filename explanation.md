@@ -224,15 +224,9 @@ Suggestions:
 - Add new display modes (e.g. 3-word chunks)
 - Add more robust Arabic typography rules
 - Implement a GUI wrapper
+ 
 
-## 14) Remotion Promo Project
-
-A separate Remotion project exists in `iqgen-promo/` to generate a marketing video. It uses:
-- Inter for primary text
-- Nerd Fonts for code blocks
-- `public/logo.png` (copied from repo image)
-
-## 15) Quick Command Cheat Sheet
+## 14) Quick Command Cheat Sheet
 
 ```bash
 # Generate from CDN recitations

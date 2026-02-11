@@ -135,5 +135,7 @@ background:
 go test ./...
 ```
 
+## How to use?
+For more detials, view [explanation](/explanation.md)
 ## License
 MIT
