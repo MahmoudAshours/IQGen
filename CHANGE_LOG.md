@@ -527,3 +527,72 @@ This Markdown changelog provides a concise summary of the new features and chang
 ### Changes to `internal/render/wrap_test.go`
 - Added tests for handling underscores in text and skipping non-connecting letters during elongation.
 ```
+
+## 2026-02-11
+
+## README-style Markdown Summary
+
+### High-Level Description of Changes
+A new file `explanation.md` has been added, providing a detailed project explanation for the IQGen / Quran Video CLI. This document serves as a developer-oriented guide to understand and modify the codebase.
+
+### Key Modifications Grouped by Type of Change
+
+#### Features
+- Added a new file `explanation.md` containing comprehensive documentation on the project's high-level goal, execution flow, core CLI commands, configuration system, audio subsystem, word alignment, repeat mode, background selection, rendering pipeline, captions, key code locations, common troubleshooting, extending the project, and a Remotion promo project.
+- Detailed explanation of each feature and its implementation.
+- Provided a quick command cheat sheet for frequently used commands.
+
+#### Enhancements
+- Improved the readability and structure of existing documentation to better support developers.
+- Added sections for configuration details, rendering options, and troubleshooting tips.
+- Included specific code locations for easy reference and modification.
+
+## 2026-02-11
+
+```markdown
+## Changelog
+
+### Features
+- Added word timing normalization for specific modes (`word-by-word`, `word`, `two-by-two`, `two`, `pair`, `2x2`) and when repeating pairs. This ensures that the word timings are properly aligned and do not overlap or exceed the verse boundaries.
+
+### Improvements
+- Updated the `runGenerate` function to include the new `normalizeWordTimings` function for modes where it is applicable.
+- Ensured that the `applyWordOffset` function remains unchanged, but with an updated call to `normalizeWordTimings`.
+
+### Notes
+- The addition of `normalizeWordTimings` should improve the accuracy and consistency of word-based video generation processes.
+
+```
+
+## 2026-02-11
+
+## Changelog
+
+### Features
+- No new features were added in this release.
+
+### Fixes
+- **wrap.go**: Adjusted `avgCharWidth` from `0.60` to `0.8`.
+- **wrap_test.go**: Removed an unnecessary `break` statement in the loop that checks for combining marks at the start of a line.
+
+### Docs
+- No documentation changes were made in this release.
+
+### Other Changes
+- The diff includes modifications to constants and test logic within the `internal/render/wrap` package.
+
+## 2026-02-11
+
+```markdown
+# Changelog
+
+## Features
+- Added a section in the README.md to guide users on how to use the application, linking to [explanation](/explanation.md) for more details.
+
+## Improvements
+- Updated the "Quick Command Cheat Sheet" section to enhance clarity and organization.
+- Removed redundant information from the "Remotion Promo Project" and "Quick Command Cheat Sheet" sections in `explanation.md`.
+
+# License
+MIT
+```
