@@ -334,6 +334,9 @@ func runGenerate(opts generateOptions) error {
 			_ = applyWordAlignment(ctx, timings, segments, audioPath, cfg.Audio, logger)
 		}
 	}
+	if mode == "word-by-word" || mode == "word" || mode == "two-by-two" || mode == "two" || mode == "pair" || mode == "2x2" || repeatPairs {
+		normalizeWordTimings(timings)
+	}
 	if opts.AudioPath != "" && mode == "sequential" {
 		if applyWordAlignmentFullAudio(ctx, timings, audioPath, cfg.Audio, logger) {
 			if applyAyahBoundariesFromWordTimings(timings) {
@@ -770,6 +773,43 @@ func applyWordOffset(timings []render.Timing, offset time.Duration) {
 			}
 			timings[i].WordTimings[j].Start = start
 			timings[i].WordTimings[j].End = end
+		}
+	}
+}
+
+func normalizeWordTimings(timings []render.Timing) {
+	minDur := 100 * time.Millisecond
+	for i := range timings {
+		if len(timings[i].WordTimings) == 0 {
+			continue
+		}
+		verseStart := timings[i].Start
+		verseEnd := timings[i].End
+		prevEnd := verseStart
+		for j := range timings[i].WordTimings {
+			start := timings[i].WordTimings[j].Start
+			end := timings[i].WordTimings[j].End
+			if start < verseStart {
+				start = verseStart
+			}
+			if start < prevEnd {
+				start = prevEnd
+			}
+			if end < start {
+				end = start
+			}
+			if end-start < minDur {
+				end = start + minDur
+			}
+			if end > verseEnd {
+				verseEnd = end
+			}
+			timings[i].WordTimings[j].Start = start
+			timings[i].WordTimings[j].End = end
+			prevEnd = end
+		}
+		if verseEnd > timings[i].End {
+			timings[i].End = verseEnd
 		}
 	}
 }
