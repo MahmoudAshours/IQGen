@@ -9,10 +9,10 @@ import (
 
 const (
 	wrapThreshold = 0.98
-	avgCharWidth  = 0.8
+	avgCharWidth  = 0.5
 	avgSpaceWidth = 0.33
 	minWrapMargin = 24
-	maxWrapMargin = 90
+	maxWrapMargin = 180
 )
 
 func wrapText(text string, maxWidth int, fontSize int) []string {
@@ -163,7 +163,7 @@ func isArabicLetter(r rune) bool {
 
 func isKashidaEligible(r rune) bool {
 	switch r {
-	case 'ا', 'أ', 'إ', 'آ', 'د', 'ذ', 'ر', 'ز', 'و', 'ؤ', 'ء', 'ى', 'ة':
+	case 'ا', 'أ', 'إ', 'آ', 'د', 'ذ', 'ر', 'ز', 'و', 'ؤ', 'ء', 'ى', 'ة', ' ':
 		return false
 	default:
 		return true
