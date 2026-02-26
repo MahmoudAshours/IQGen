@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"qgencodex/internal/align"
 	"qgencodex/internal/config"
 	"qgencodex/internal/quran"
+	"qgencodex/internal/recognize"
 	"qgencodex/internal/render"
 )
 
@@ -168,5 +170,95 @@ func TestBuildLineModeTimings(t *testing.T) {
 	}
 	if got[1].Start != 4*time.Second || got[1].End != 8*time.Second {
 		t.Fatalf("unexpected second line timing: %v-%v", got[1].Start, got[1].End)
+	}
+}
+
+type fakeCorpus struct {
+	surah map[int][]recognize.Ayah
+}
+
+func (f *fakeCorpus) FetchSurah(_ context.Context, surah int) ([]recognize.Ayah, error) {
+	if out, ok := f.surah[surah]; ok {
+		return out, nil
+	}
+	return nil, nil
+}
+
+func TestDetectLeadingFatihaCut(t *testing.T) {
+	corpus := &fakeCorpus{
+		surah: map[int][]recognize.Ayah{
+			1: {
+				{NumberInSurah: 1, Text: "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"},
+				{NumberInSurah: 2, Text: "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ"},
+				{NumberInSurah: 3, Text: "الرَّحْمَٰنِ الرَّحِيمِ"},
+				{NumberInSurah: 4, Text: "مَالِكِ يَوْمِ الدِّينِ"},
+				{NumberInSurah: 5, Text: "إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ"},
+				{NumberInSurah: 6, Text: "اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ"},
+				{NumberInSurah: 7, Text: "صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ"},
+			},
+		},
+	}
+	words := []align.WordTiming{
+		{Word: "بسم", Start: 0 * time.Second, End: 1 * time.Second},
+		{Word: "الله", Start: 1 * time.Second, End: 2 * time.Second},
+		{Word: "الرحمن", Start: 2 * time.Second, End: 3 * time.Second},
+		{Word: "الرحيم", Start: 3 * time.Second, End: 4 * time.Second},
+		{Word: "الحمد", Start: 4 * time.Second, End: 5 * time.Second},
+		{Word: "لله", Start: 5 * time.Second, End: 6 * time.Second},
+		{Word: "رب", Start: 6 * time.Second, End: 7 * time.Second},
+		{Word: "العالمين", Start: 7 * time.Second, End: 8 * time.Second},
+		{Word: "اياك", Start: 8 * time.Second, End: 9 * time.Second},
+		{Word: "نعبد", Start: 9 * time.Second, End: 10 * time.Second},
+		{Word: "واياك", Start: 10 * time.Second, End: 11 * time.Second},
+		{Word: "نستعين", Start: 11 * time.Second, End: 12 * time.Second},
+		{Word: "اهدنا", Start: 12 * time.Second, End: 13 * time.Second},
+		{Word: "الصراط", Start: 13 * time.Second, End: 14 * time.Second},
+		{Word: "المستقيم", Start: 14 * time.Second, End: 15 * time.Second},
+		{Word: "امين", Start: 15 * time.Second, End: 16 * time.Second},
+		{Word: "الم", Start: 19 * time.Second, End: 20 * time.Second},
+	}
+	cut, summary, ok, err := detectLeadingFatihaCut(context.Background(), words, corpus)
+	if err != nil {
+		t.Fatalf("detectLeadingFatihaCut failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected fatiha to be detected")
+	}
+	if cut != 19*time.Second {
+		t.Fatalf("expected cut to start at next recitation word after ameen, got %s", cut)
+	}
+	if summary.matches <= 0 || summary.coverage <= 0 {
+		t.Fatalf("expected positive summary, got %+v", summary)
+	}
+}
+
+func TestDetectLeadingFatihaCut_NoMatch(t *testing.T) {
+	corpus := &fakeCorpus{
+		surah: map[int][]recognize.Ayah{
+			1: {
+				{NumberInSurah: 1, Text: "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"},
+				{NumberInSurah: 2, Text: "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ"},
+				{NumberInSurah: 3, Text: "الرَّحْمَٰنِ الرَّحِيمِ"},
+				{NumberInSurah: 4, Text: "مَالِكِ يَوْمِ الدِّينِ"},
+				{NumberInSurah: 5, Text: "إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ"},
+				{NumberInSurah: 6, Text: "اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ"},
+				{NumberInSurah: 7, Text: "صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ"},
+			},
+		},
+	}
+	words := []align.WordTiming{
+		{Word: "الم", Start: 0 * time.Second, End: 1 * time.Second},
+		{Word: "ذلك", Start: 1 * time.Second, End: 2 * time.Second},
+		{Word: "الكتاب", Start: 2 * time.Second, End: 3 * time.Second},
+		{Word: "لا", Start: 3 * time.Second, End: 4 * time.Second},
+		{Word: "ريب", Start: 4 * time.Second, End: 5 * time.Second},
+		{Word: "فيه", Start: 5 * time.Second, End: 6 * time.Second},
+	}
+	_, _, ok, err := detectLeadingFatihaCut(context.Background(), words, corpus)
+	if err != nil {
+		t.Fatalf("detectLeadingFatihaCut failed: %v", err)
+	}
+	if ok {
+		t.Fatalf("did not expect fatihah detection")
 	}
 }
