@@ -9,7 +9,7 @@ A production‑oriented command‑line tool for generating Quran verse videos op
 - English translation overlay (optional)
 - Download recitations from Islamic Network CDN
 - Local recitation support (`generate-audio`) with Whisper alignment
-- Sequential, word‑by‑word, and two‑by‑two word modes
+- Sequential, line-by-line, word‑by‑word, and two‑by‑two word modes
 - Pause‑sensitive display (text hides during silences)
 - Background videos from Pexels or Pixabay, or local/YouTube inputs
 - AI keyword extraction + AI video selection (local Llama/Ollama)
@@ -67,6 +67,7 @@ Detect surah + ayah range from a recitation file.
 
 ## Display Modes
 - `sequential`: full ayah on screen
+- `lines` / `line`: Quran line mode (uses `lines/<surah>.txt`; switches line when recitation reaches the next line)
 - `word-by-word` / `word`: one word at a time (Whisper aligned)
 - `two-by-two` / `two` / `pair` / `2x2`: two words at a time (Whisper aligned)
 
@@ -92,6 +93,8 @@ Default location: `~/.quranvideo/config.yaml`
 Key settings (non‑exhaustive):
 ```yaml
 quran_api:
+  use_local_db: false
+  local_db_path: ./The_Holy_Quran.db
   edition: quran-uthmani
   reciter: ar.alafasy
 

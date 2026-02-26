@@ -1,9 +1,13 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"qgencodex/internal/align"
+	"qgencodex/internal/config"
 	"qgencodex/internal/quran"
 	"qgencodex/internal/render"
 )
@@ -49,5 +53,120 @@ func TestEnsureContinuousTimings(t *testing.T) {
 	}
 	if timings[1].End != 5*time.Second {
 		t.Fatalf("expected last end to match total")
+	}
+}
+
+func TestSTTHelpers(t *testing.T) {
+	cfg := config.Default().Audio
+	cfg.STTBackend = ""
+	cfg.WhisperCmd = ""
+	cfg.STTTimeoutSec = 0
+	if got := sttBackendLabel(cfg); got != "auto" {
+		t.Fatalf("unexpected backend label: %s", got)
+	}
+	if got := sttCommandLabel(cfg); got != "whisper" {
+		t.Fatalf("unexpected command label: %s", got)
+	}
+	if got := sttTimeout(cfg); got != 90*time.Second {
+		t.Fatalf("unexpected timeout: %s", got)
+	}
+}
+
+func TestTranscriptFromWordTimings(t *testing.T) {
+	words := []align.WordTiming{
+		{Word: "  "},
+		{Word: "بسم"},
+		{Word: "الله"},
+	}
+	got := transcriptFromWordTimings(words)
+	if got != "بسم الله" {
+		t.Fatalf("unexpected transcript: %q", got)
+	}
+}
+
+func TestNormalizeWordTimings_AppendsStandaloneMarks(t *testing.T) {
+	timings := []render.Timing{
+		{
+			Verse: quran.Verse{Text: "dummy"},
+			Start: 0,
+			End:   2 * time.Second,
+			WordTimings: []render.WordTiming{
+				{Word: "وَٱغْلُظْ", Start: 0, End: 800 * time.Millisecond},
+				{Word: "ۖ", Start: 800 * time.Millisecond, End: 900 * time.Millisecond},
+				{Word: "عَلَيْهِمْ", Start: 900 * time.Millisecond, End: 1500 * time.Millisecond},
+			},
+		},
+	}
+
+	normalizeWordTimings(timings)
+
+	got := timings[0].WordTimings
+	if len(got) != 2 {
+		t.Fatalf("expected 2 dialogue words after mark merge, got %d", len(got))
+	}
+	if got[0].Word != "وَٱغْلُظْۖ" {
+		t.Fatalf("expected mark to append to previous word, got %q", got[0].Word)
+	}
+	if isStandaloneMark(got[0].Word) || isStandaloneMark(got[1].Word) {
+		t.Fatalf("unexpected standalone mark word after normalization: %#v", got)
+	}
+}
+
+func TestSplitLineIntoAyahParts(t *testing.T) {
+	parts, next := splitLineIntoAyahParts("الرَّحْمَنِ الرَّحِيمِ ( 3 ) مَالِكِ يَوْمِ الدِّينِ ( 4 )", 3)
+	if next != 5 {
+		t.Fatalf("expected next ayah 5, got %d", next)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(parts))
+	}
+	if parts[0].Ayah != 3 || parts[1].Ayah != 4 {
+		t.Fatalf("unexpected part ayahs: %+v", parts)
+	}
+}
+
+func TestBuildLineModeTimings(t *testing.T) {
+	dir := t.TempDir()
+	lines := "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ ( 1 )\nالْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ ( 2 )\n"
+	if err := os.WriteFile(filepath.Join(dir, "1.txt"), []byte(lines), 0o644); err != nil {
+		t.Fatalf("write lines file: %v", err)
+	}
+	t.Setenv("QURAN_LINES_DIR", dir)
+	timings := []render.Timing{
+		{
+			Verse: quran.Verse{NumberInSurah: 1, Text: "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ", Translation: "In the name of Allah"},
+			Start: 0,
+			End:   4 * time.Second,
+			WordTimings: []render.WordTiming{
+				{Word: "بِسْمِ", Start: 0, End: 1 * time.Second},
+				{Word: "اللَّهِ", Start: 1 * time.Second, End: 2 * time.Second},
+				{Word: "الرَّحْمَنِ", Start: 2 * time.Second, End: 3 * time.Second},
+				{Word: "الرَّحِيمِ", Start: 3 * time.Second, End: 4 * time.Second},
+			},
+		},
+		{
+			Verse: quran.Verse{NumberInSurah: 2, Text: "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ", Translation: "All praise is due to Allah"},
+			Start: 4 * time.Second,
+			End:   8 * time.Second,
+			WordTimings: []render.WordTiming{
+				{Word: "الْحَمْدُ", Start: 4 * time.Second, End: 5 * time.Second},
+				{Word: "لِلَّهِ", Start: 5 * time.Second, End: 6 * time.Second},
+				{Word: "رَبِّ", Start: 6 * time.Second, End: 7 * time.Second},
+				{Word: "الْعَالَمِينَ", Start: 7 * time.Second, End: 8 * time.Second},
+			},
+		},
+	}
+	got, err := buildLineModeTimings(1, 1, 2, timings)
+	if err != nil {
+		t.Fatalf("buildLineModeTimings failed: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 line timings, got %d", len(got))
+	}
+	if got[0].Start != 0 || got[0].End != 4*time.Second {
+		t.Fatalf("unexpected first line timing: %v-%v", got[0].Start, got[0].End)
+	}
+	if got[1].Start != 4*time.Second || got[1].End != 8*time.Second {
+		t.Fatalf("unexpected second line timing: %v-%v", got[1].Start, got[1].End)
 	}
 }

@@ -11,6 +11,8 @@ type wordPair struct {
 	End   time.Duration
 }
 
+const minTwoWordPairDuration = 300 * time.Millisecond
+
 func buildWordPairs(t Timing) []wordPair {
 	if len(t.WordTimings) == 0 {
 		return buildEvenPairsFromText(t.Verse.Text, t.Start, t.End)
@@ -43,7 +45,96 @@ func buildWordPairs(t Timing) []wordPair {
 	if invalid {
 		return buildEvenPairs(words, t.Start, t.End)
 	}
-	return pairs
+	return smoothPairDurations(pairs, minTwoWordPairDuration)
+}
+
+func smoothPairDurations(in []wordPair, minDur time.Duration) []wordPair {
+	if len(in) == 0 || minDur <= 0 {
+		return in
+	}
+	out := make([]wordPair, len(in))
+	copy(out, in)
+	if len(out) == 1 {
+		if out[0].End < out[0].Start {
+			out[0].End = out[0].Start
+		}
+		return out
+	}
+	start := out[0].Start
+	finalEnd := out[len(out)-1].End
+	if finalEnd <= start {
+		return out
+	}
+	total := finalEnd - start
+	durs := make([]time.Duration, len(out))
+	sum := time.Duration(0)
+	for i := range out {
+		d := out[i].End - out[i].Start
+		if d < 0 {
+			d = 0
+		}
+		durs[i] = d
+		sum += d
+	}
+	if sum <= 0 {
+		return out
+	}
+	// Preserve overall timing span.
+	scale := float64(total) / float64(sum)
+	scaled := make([]time.Duration, len(durs))
+	scaledSum := time.Duration(0)
+	for i, d := range durs {
+		scaled[i] = time.Duration(float64(d) * scale)
+		scaledSum += scaled[i]
+	}
+	if diff := total - scaledSum; diff != 0 {
+		scaled[len(scaled)-1] += diff
+	}
+	durs = scaled
+	minEff := minDuration(minDur, total/time.Duration(len(durs)))
+	if minEff > 0 {
+		for i := range durs {
+			if durs[i] >= minEff {
+				continue
+			}
+			need := minEff - durs[i]
+			// Borrow from later/longer pairs first to minimize shifting early content.
+			for j := len(durs) - 1; j >= 0 && need > 0; j-- {
+				if j == i {
+					continue
+				}
+				avail := durs[j] - minEff
+				if avail <= 0 {
+					continue
+				}
+				give := minDuration(need, avail)
+				durs[j] -= give
+				durs[i] += give
+				need -= give
+			}
+		}
+	}
+	cursor := start
+	for i := range out {
+		out[i].Start = cursor
+		end := cursor + durs[i]
+		if i == len(out)-1 || end > finalEnd {
+			end = finalEnd
+		}
+		if end < out[i].Start {
+			end = out[i].Start
+		}
+		out[i].End = end
+		cursor = end
+	}
+	return out
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func buildEvenPairsFromText(text string, start, end time.Duration) []wordPair {

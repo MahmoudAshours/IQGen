@@ -56,6 +56,37 @@ func DownloadYouTubeSegment(ctx context.Context, videoURL, destPath string, dura
 	return nil
 }
 
+// ResolveYouTubeAudioStreamURL resolves a playable direct audio stream URL from a YouTube URL using yt-dlp.
+func ResolveYouTubeAudioStreamURL(ctx context.Context, videoURL, ytDlpCmd string) (string, error) {
+	cmdName := strings.TrimSpace(ytDlpCmd)
+	if cmdName == "" {
+		cmdName = "yt-dlp"
+	}
+	if _, err := exec.LookPath(cmdName); err != nil {
+		return "", fmt.Errorf("%s not found in PATH", cmdName)
+	}
+	args := []string{
+		"-f", "bestaudio/best",
+		"--no-playlist",
+		"--get-url",
+		videoURL,
+	}
+	cmd := exec.CommandContext(ctx, cmdName, args...)
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("%s failed: %w: %s", cmdName, err, strings.TrimSpace(output.String()))
+	}
+	for _, line := range strings.Split(output.String(), "\n") {
+		u := strings.TrimSpace(line)
+		if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+			return u, nil
+		}
+	}
+	return "", fmt.Errorf("no stream URL found in %s output", cmdName)
+}
+
 func formatYTDLDuration(d time.Duration) string {
 	if d <= 0 {
 		return "00:00:00"

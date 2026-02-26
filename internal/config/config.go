@@ -34,16 +34,27 @@ type QuranAPIConfig struct {
 	Translation string `yaml:"translation"`
 	Reciter     string `yaml:"reciter"`
 	TimeoutSec  int    `yaml:"timeout_sec"`
+	UseLocalDB  bool   `yaml:"use_local_db"`
+	LocalDBPath string `yaml:"local_db_path"`
 }
 
 type AudioConfig struct {
 	CDNBaseURL             string  `yaml:"cdn_base_url"`
 	BitrateKbps            int     `yaml:"bitrate_kbps"`
 	MaxConcurrent          int     `yaml:"max_concurrent"`
+	WhisperWorkers         int     `yaml:"whisper_workers"`
+	STTBackend             string  `yaml:"stt_backend"`
 	WordTiming             string  `yaml:"word_timing"`
 	WordOffsetMs           int     `yaml:"word_offset_ms"`
 	AutoWordOffset         bool    `yaml:"auto_word_offset"`
 	AutoWordOffsetWindowMs int     `yaml:"auto_word_offset_window_ms"`
+	EchoReduction          bool    `yaml:"echo_reduction"`
+	EchoFilter             string  `yaml:"echo_filter"`
+	GoWhisperModel         string  `yaml:"go_whisper_model"`
+	GoWhisperIdentifyModel string  `yaml:"go_whisper_identify_model"`
+	GoWhisperRemote        bool    `yaml:"go_whisper_remote"`
+	GoWhisperAddr          string  `yaml:"go_whisper_addr"`
+	STTTimeoutSec          int     `yaml:"stt_timeout_sec"`
 	PauseSensitive         bool    `yaml:"pause_sensitive"`
 	PauseDB                int     `yaml:"pause_db"`
 	PauseSec               float64 `yaml:"pause_sec"`
@@ -83,6 +94,9 @@ type VideoConfig struct {
 	Resolution         string       `yaml:"resolution"`
 	DisplayMode        string       `yaml:"display_mode"`
 	Renderer           string       `yaml:"renderer"`
+	EncodePreset       string       `yaml:"encode_preset"`
+	EncodeCRF          int          `yaml:"encode_crf"`
+	EncodeThreads      int          `yaml:"encode_threads"`
 	TranslationFont    string       `yaml:"translation_font"`
 	TranslationSpacing int          `yaml:"translation_spacing"`
 	Elongate           bool         `yaml:"elongate"`
@@ -166,15 +180,26 @@ func Default() Config {
 			Translation: "en.sahih",
 			Reciter:     "ar.alafasy",
 			TimeoutSec:  10,
+			UseLocalDB:  false,
+			LocalDBPath: "./The_Holy_Quran.db",
 		},
 		Audio: AudioConfig{
 			CDNBaseURL:             "https://cdn.islamic.network/quran/audio",
 			BitrateKbps:            128,
 			MaxConcurrent:          3,
+			WhisperWorkers:         2,
+			STTBackend:             "auto",
 			WordTiming:             "auto",
 			WordOffsetMs:           -20,
 			AutoWordOffset:         false,
 			AutoWordOffsetWindowMs: 80,
+			EchoReduction:          false,
+			EchoFilter:             "",
+			GoWhisperModel:         "ggml-medium-q5_0",
+			GoWhisperIdentifyModel: "",
+			GoWhisperRemote:        false,
+			GoWhisperAddr:          "",
+			STTTimeoutSec:          90,
 			PauseSensitive:         false,
 			PauseDB:                -35,
 			PauseSec:               0.20,
@@ -210,6 +235,9 @@ func Default() Config {
 			Resolution:         "1080x1920",
 			DisplayMode:        "sequential",
 			Renderer:           "drawtext",
+			EncodePreset:       "veryfast",
+			EncodeCRF:          20,
+			EncodeThreads:      0,
 			TranslationFont:    "Helvetica",
 			TranslationSpacing: 24,
 			Elongate:           false,
@@ -333,6 +361,7 @@ func (c *Config) ExpandEnv() {
 	c.QuranAPI.Edition = expandEnv(c.QuranAPI.Edition)
 	c.QuranAPI.Translation = expandEnv(c.QuranAPI.Translation)
 	c.QuranAPI.Reciter = expandEnv(c.QuranAPI.Reciter)
+	c.QuranAPI.LocalDBPath = expandEnv(c.QuranAPI.LocalDBPath)
 	c.Background.PexelsAPIKey = expandEnv(c.Background.PexelsAPIKey)
 	c.Background.PexelsBaseURL = expandEnv(c.Background.PexelsBaseURL)
 	c.Background.PixabayAPIKey = expandEnv(c.Background.PixabayAPIKey)
@@ -346,6 +375,10 @@ func (c *Config) ExpandEnv() {
 	c.Video.Font.ShadowColor = expandEnv(c.Video.Font.ShadowColor)
 	c.Video.Reference.Color = expandEnv(c.Video.Reference.Color)
 	c.Video.Background.Color = expandEnv(c.Video.Background.Color)
+	c.Audio.EchoFilter = expandEnv(c.Audio.EchoFilter)
+	c.Audio.GoWhisperModel = expandEnv(c.Audio.GoWhisperModel)
+	c.Audio.GoWhisperIdentifyModel = expandEnv(c.Audio.GoWhisperIdentifyModel)
+	c.Audio.GoWhisperAddr = expandEnv(c.Audio.GoWhisperAddr)
 	c.AI.BaseURL = expandEnv(c.AI.BaseURL)
 	c.AI.Model = expandEnv(c.AI.Model)
 }
@@ -375,8 +408,24 @@ func (c *Config) Validate() error {
 	if c.QuranAPI.Reciter == "" {
 		return errors.New("quran_api.reciter is required")
 	}
+	if c.QuranAPI.UseLocalDB && strings.TrimSpace(c.QuranAPI.LocalDBPath) == "" {
+		return errors.New("quran_api.local_db_path is required when quran_api.use_local_db=true")
+	}
 	if c.Audio.BitrateKbps <= 0 {
 		return errors.New("audio.bitrate_kbps must be positive")
+	}
+	if c.Audio.WhisperWorkers < 0 {
+		return errors.New("audio.whisper_workers must be >= 0")
+	}
+	if c.Audio.STTTimeoutSec <= 0 {
+		return errors.New("audio.stt_timeout_sec must be positive")
+	}
+	if c.Audio.STTBackend != "" {
+		switch strings.ToLower(c.Audio.STTBackend) {
+		case "auto", "python", "whisper", "gowhisper", "go-whisper":
+		default:
+			return fmt.Errorf("unsupported audio.stt_backend: %s", c.Audio.STTBackend)
+		}
 	}
 	if c.Audio.WordTiming != "" {
 		switch strings.ToLower(c.Audio.WordTiming) {
@@ -386,7 +435,7 @@ func (c *Config) Validate() error {
 		}
 	}
 	switch strings.ToLower(c.Video.DisplayMode) {
-	case "sequential", "repeat", "sequential-repeat", "repeat-2x2", "repeat-two-by-two", "repeat-pair", "word-by-word", "two-by-two", "two", "pair", "2x2":
+	case "sequential", "line", "lines", "line-by-line", "repeat", "sequential-repeat", "repeat-2x2", "repeat-two-by-two", "repeat-pair", "word-by-word", "two-by-two", "two", "pair", "2x2":
 	default:
 		return fmt.Errorf("unsupported video.display_mode: %s", c.Video.DisplayMode)
 	}
@@ -413,6 +462,19 @@ func (c *Config) Validate() error {
 	}
 	if c.Video.Font.Size <= 0 {
 		return errors.New("video.font.size must be positive")
+	}
+	if c.Video.EncodeCRF < 0 || c.Video.EncodeCRF > 51 {
+		return errors.New("video.encode_crf must be between 0 and 51")
+	}
+	if c.Video.EncodeThreads < 0 {
+		return errors.New("video.encode_threads must be >= 0")
+	}
+	if c.Video.EncodePreset != "" {
+		switch strings.ToLower(c.Video.EncodePreset) {
+		case "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow":
+		default:
+			return fmt.Errorf("unsupported video.encode_preset: %s", c.Video.EncodePreset)
+		}
 	}
 	if c.Video.Glass.Alpha < 0 || c.Video.Glass.Alpha > 1 {
 		return errors.New("video.glass.alpha must be between 0 and 1")

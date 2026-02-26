@@ -82,3 +82,25 @@ func TestMaybeElongateLines(t *testing.T) {
 		t.Fatalf("expected elongation, got %q", out[0])
 	}
 }
+
+func TestMaxTextWidthUsesSmallMargins(t *testing.T) {
+	cfg := config.Default().Video
+	cfg.Margins.Left = 120
+	cfg.Margins.Right = 120
+	got := maxTextWidth(cfg, 1080)
+	want := 1080 - 2*smallWrapMargin(1080)
+	if got != want {
+		t.Fatalf("expected %d, got %d", want, got)
+	}
+}
+
+func TestMaxTextWidthKeepsSmallerCustomMargins(t *testing.T) {
+	cfg := config.Default().Video
+	cfg.Margins.Left = 20
+	cfg.Margins.Right = 16
+	got := maxTextWidth(cfg, 1080)
+	want := 1080 - 36
+	if got != want {
+		t.Fatalf("expected %d, got %d", want, got)
+	}
+}

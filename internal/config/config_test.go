@@ -56,3 +56,40 @@ func TestValidateRenderer(t *testing.T) {
 		t.Fatalf("expected error for unsupported renderer")
 	}
 }
+
+func TestValidateDisplayModeLines(t *testing.T) {
+	cfg := Default()
+	cfg.Video.DisplayMode = "lines"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected lines display mode to validate, got %v", err)
+	}
+}
+
+func TestValidateSTTBackend(t *testing.T) {
+	cfg := Default()
+	cfg.Audio.STTBackend = "gowhisper"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected go-whisper backend to validate, got %v", err)
+	}
+	cfg.Audio.STTBackend = "bad-backend"
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected error for unsupported stt backend")
+	}
+}
+
+func TestValidateSTTTimeout(t *testing.T) {
+	cfg := Default()
+	cfg.Audio.STTTimeoutSec = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected error for non-positive stt timeout")
+	}
+}
+
+func TestValidateLocalDBConfig(t *testing.T) {
+	cfg := Default()
+	cfg.QuranAPI.UseLocalDB = true
+	cfg.QuranAPI.LocalDBPath = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected error when local DB path is empty and local DB is enabled")
+	}
+}

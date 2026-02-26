@@ -11,6 +11,8 @@ const (
 	wrapThreshold = 0.98
 	avgCharWidth  = 0.8
 	avgSpaceWidth = 0.33
+	minWrapMargin = 24
+	maxWrapMargin = 90
 )
 
 func wrapText(text string, maxWidth int, fontSize int) []string {
@@ -280,15 +282,30 @@ func applyKashidaMarks(text string, count int) string {
 func maxTextWidth(cfg config.VideoConfig, width int) int {
 	left := cfg.Margins.Left
 	right := cfg.Margins.Right
-	if left == 0 {
-		left = 120
+	small := smallWrapMargin(width)
+	if left <= 0 || left > small {
+		left = small
 	}
-	if right == 0 {
-		right = 120
+	if right <= 0 || right > small {
+		right = small
 	}
 	maxWidth := width - left - right
 	if maxWidth <= 0 {
-		maxWidth = int(float64(width) * 0.9)
+		maxWidth = width - 2*small
+	}
+	if maxWidth <= 0 {
+		maxWidth = int(float64(width) * 0.95)
 	}
 	return maxWidth
+}
+
+func smallWrapMargin(width int) int {
+	m := width / 20 // ~5% side margin
+	if m < minWrapMargin {
+		return minWrapMargin
+	}
+	if m > maxWrapMargin {
+		return maxWrapMargin
+	}
+	return m
 }

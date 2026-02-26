@@ -1,26 +1,60 @@
 package align
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 )
 
+type Options struct {
+	Command         string
+	Backend         string
+	GoWhisperModel  string
+	GoWhisperRemote bool
+	GoWhisperAddr   string
+}
+
 type WhisperAligner struct {
-	Cmd string
+	Cmd             string
+	Backend         string
+	GoWhisperModel  string
+	GoWhisperRemote bool
+	GoWhisperAddr   string
 }
 
 func NewWhisperAligner(cmd string) *WhisperAligner {
+	return NewWhisperAlignerWithOptions(Options{Command: cmd})
+}
+
+func NewWhisperAlignerWithOptions(opts Options) *WhisperAligner {
+	cmd := strings.TrimSpace(opts.Command)
 	if cmd == "" {
 		cmd = "whisper"
 	}
-	return &WhisperAligner{Cmd: cmd}
+	backend := strings.ToLower(strings.TrimSpace(opts.Backend))
+	if backend == "" {
+		backend = "auto"
+	}
+	model := strings.TrimSpace(opts.GoWhisperModel)
+	if model == "" {
+		model = "ggml-medium-q5_0"
+	}
+	return &WhisperAligner{
+		Cmd:             cmd,
+		Backend:         backend,
+		GoWhisperModel:  model,
+		GoWhisperRemote: opts.GoWhisperRemote,
+		GoWhisperAddr:   strings.TrimSpace(opts.GoWhisperAddr),
+	}
 }
 
 func (w *WhisperAligner) Available() bool {
@@ -29,8 +63,12 @@ func (w *WhisperAligner) Available() bool {
 }
 
 func (w *WhisperAligner) Align(audioPath string, words []string, language string) ([]WordTiming, error) {
+	return w.AlignContext(context.Background(), audioPath, words, language)
+}
+
+func (w *WhisperAligner) AlignContext(ctx context.Context, audioPath string, words []string, language string) ([]WordTiming, error) {
 	if !w.Available() {
-		return nil, fmt.Errorf("whisper command not found: %s", w.Cmd)
+		return nil, fmt.Errorf("speech-to-text command not found: %s", w.Cmd)
 	}
 	if len(words) == 0 {
 		return nil, errors.New("no words to align")
@@ -38,47 +76,33 @@ func (w *WhisperAligner) Align(audioPath string, words []string, language string
 	if language == "" {
 		language = "ar"
 	}
-	outputDir, err := os.MkdirTemp("", "quranvideo-whisper-*")
+	whisperWords, err := w.transcribeFlatWords(ctx, audioPath, language, strings.TrimSpace(strings.Join(words, " ")))
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(outputDir)
+	return alignToFlatWords(words, whisperWords)
+}
 
-	jsonPath := filepath.Join(outputDir, strings.TrimSuffix(filepath.Base(audioPath), filepath.Ext(audioPath))+".json")
-	prompt := strings.TrimSpace(strings.Join(words, " "))
-	baseArgs := []string{
-		"--language", language,
-		"--word_timestamps", "True",
-		"--output_format", "json",
-		"--output_dir", outputDir,
-		"--task", "transcribe",
-		audioPath,
-	}
-	advancedArgs := append([]string{}, baseArgs...)
-	advancedArgs = append(advancedArgs,
-		"--temperature", "0",
-		"--beam_size", "5",
-		"--best_of", "5",
-	)
-	if prompt != "" {
-		advancedArgs = append(advancedArgs, "--initial_prompt", prompt)
-	}
-	if err := runWhisper(w.Cmd, advancedArgs); err != nil {
-		_ = os.Remove(jsonPath)
-		if err := runWhisper(w.Cmd, baseArgs); err != nil {
-			return nil, err
+// AlignWordsToTranscript aligns canonical ayah words against already-transcribed
+// word timings (for example, when STT output is reused across stages).
+func AlignWordsToTranscript(words []string, whisperWords []WordTiming) ([]WordTiming, error) {
+	flat := make([]flatWord, 0, len(whisperWords))
+	for _, w := range whisperWords {
+		text := strings.TrimSpace(w.Word)
+		if text == "" {
+			continue
 		}
+		start := w.Start
+		end := w.End
+		if end < start {
+			end = start
+		}
+		flat = append(flat, flatWord{Word: text, Start: start, End: end})
 	}
+	return alignToFlatWords(words, flat)
+}
 
-	data, err := os.ReadFile(jsonPath)
-	if err != nil {
-		return nil, err
-	}
-	var result whisperResult
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-	whisperWords := flattenWhisperWords(result)
+func alignToFlatWords(words []string, whisperWords []flatWord) ([]WordTiming, error) {
 	if len(whisperWords) == 0 {
 		return nil, errors.New("no words found in whisper output")
 	}
@@ -107,11 +131,33 @@ func (w *WhisperAligner) Align(audioPath string, words []string, language string
 }
 
 func (w *WhisperAligner) TranscribeWords(audioPath string, language string) ([]WordTiming, error) {
+	return w.TranscribeWordsContext(context.Background(), audioPath, language)
+}
+
+func (w *WhisperAligner) TranscribeWordsContext(ctx context.Context, audioPath string, language string) ([]WordTiming, error) {
 	if !w.Available() {
-		return nil, fmt.Errorf("whisper command not found: %s", w.Cmd)
+		return nil, fmt.Errorf("speech-to-text command not found: %s", w.Cmd)
 	}
 	if language == "" {
 		language = "ar"
+	}
+	whisperWords, err := w.transcribeFlatWords(ctx, audioPath, language, "")
+	if err != nil {
+		return nil, err
+	}
+	if len(whisperWords) == 0 {
+		return nil, errors.New("no words found in transcription output")
+	}
+	out := make([]WordTiming, 0, len(whisperWords))
+	for _, w := range whisperWords {
+		out = append(out, WordTiming{Word: w.Word, Start: w.Start, End: w.End})
+	}
+	return out, nil
+}
+
+func (w *WhisperAligner) transcribeFlatWords(ctx context.Context, audioPath, language, prompt string) ([]flatWord, error) {
+	if w.useGoWhisper() {
+		return w.transcribeFlatWordsGoWhisper(ctx, audioPath, language)
 	}
 	outputDir, err := os.MkdirTemp("", "quranvideo-whisper-*")
 	if err != nil {
@@ -134,9 +180,9 @@ func (w *WhisperAligner) TranscribeWords(audioPath string, language string) ([]W
 		"--beam_size", "5",
 		"--best_of", "5",
 	)
-	if err := runWhisper(w.Cmd, advancedArgs); err != nil {
+	if err := runWhisper(ctx, w.Cmd, advancedArgs); err != nil {
 		_ = os.Remove(jsonPath)
-		if err := runWhisper(w.Cmd, baseArgs); err != nil {
+		if err := runWhisper(ctx, w.Cmd, baseArgs); err != nil {
 			return nil, err
 		}
 	}
@@ -149,15 +195,37 @@ func (w *WhisperAligner) TranscribeWords(audioPath string, language string) ([]W
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, err
 	}
-	whisperWords := flattenWhisperWords(result)
-	if len(whisperWords) == 0 {
-		return nil, errors.New("no words found in whisper output")
+	return flattenWhisperWords(result), nil
+}
+
+func (w *WhisperAligner) transcribeFlatWordsGoWhisper(ctx context.Context, audioPath, language string) ([]flatWord, error) {
+	model := strings.TrimSpace(w.GoWhisperModel)
+	if model == "" {
+		model = "ggml-medium-q5_0"
 	}
-	out := make([]WordTiming, 0, len(whisperWords))
-	for _, w := range whisperWords {
-		out = append(out, WordTiming{Word: w.Word, Start: w.Start, End: w.End})
+	args := []string{"transcribe", model, audioPath, "--format", "json"}
+	if language != "" {
+		args = append(args, "--language", language)
 	}
-	return out, nil
+	if w.GoWhisperRemote {
+		args = append(args, "--remote")
+	}
+	data, err := runGoWhisper(ctx, w.Cmd, args, w.GoWhisperAddr)
+	if err != nil {
+		return nil, err
+	}
+	return parseGoWhisperFlatWords(data)
+}
+
+func (w *WhisperAligner) useGoWhisper() bool {
+	switch strings.ToLower(strings.TrimSpace(w.Backend)) {
+	case "gowhisper", "go-whisper":
+		return true
+	case "python", "whisper":
+		return false
+	}
+	base := strings.ToLower(filepath.Base(w.Cmd))
+	return strings.Contains(base, "gowhisper") || strings.Contains(base, "go-whisper")
 }
 
 type whisperResult struct {
@@ -192,6 +260,233 @@ func flattenWhisperWords(result whisperResult) []flatWord {
 		}
 	}
 	return out
+}
+
+type goWhisperTimestamp time.Duration
+
+func (t *goWhisperTimestamp) UnmarshalJSON(data []byte) error {
+	s := strings.TrimSpace(string(data))
+	if s == "" || s == "null" {
+		*t = 0
+		return nil
+	}
+	if strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"") {
+		raw := strings.Trim(s, "\"")
+		if raw == "" {
+			*t = 0
+			return nil
+		}
+		d, err := parseGoWhisperTime(raw)
+		if err != nil {
+			return err
+		}
+		*t = goWhisperTimestamp(d)
+		return nil
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return err
+	}
+	*t = goWhisperTimestamp(time.Duration(f * float64(time.Second)))
+	return nil
+}
+
+func (t goWhisperTimestamp) Duration() time.Duration {
+	return time.Duration(t)
+}
+
+type goWhisperWord struct {
+	Text  string             `json:"text"`
+	Word  string             `json:"word"`
+	Start goWhisperTimestamp `json:"start"`
+	End   goWhisperTimestamp `json:"end"`
+}
+
+type goWhisperSegment struct {
+	Text  string             `json:"text"`
+	Start goWhisperTimestamp `json:"start"`
+	End   goWhisperTimestamp `json:"end"`
+	Words []goWhisperWord    `json:"words"`
+}
+
+type goWhisperResult struct {
+	Text     string             `json:"text"`
+	Segments []goWhisperSegment `json:"segments"`
+}
+
+func parseGoWhisperFlatWords(data []byte) ([]flatWord, error) {
+	var res goWhisperResult
+	if err := json.Unmarshal(data, &res); err == nil {
+		words := flattenGoWhisperSegments(res.Segments)
+		if len(words) > 0 {
+			return words, nil
+		}
+	}
+	var segments []goWhisperSegment
+	if err := json.Unmarshal(data, &segments); err == nil {
+		words := flattenGoWhisperSegments(segments)
+		if len(words) > 0 {
+			return words, nil
+		}
+	}
+	var results []goWhisperResult
+	if err := json.Unmarshal(data, &results); err == nil {
+		words := make([]flatWord, 0, 128)
+		for _, item := range results {
+			words = append(words, flattenGoWhisperSegments(item.Segments)...)
+		}
+		if len(words) > 0 {
+			return words, nil
+		}
+	}
+	var simpleWords []goWhisperWord
+	if err := json.Unmarshal(data, &simpleWords); err == nil {
+		words := make([]flatWord, 0, len(simpleWords))
+		for _, w := range simpleWords {
+			text := strings.TrimSpace(w.Word)
+			if text == "" {
+				text = strings.TrimSpace(w.Text)
+			}
+			if text == "" {
+				continue
+			}
+			start := w.Start.Duration()
+			end := w.End.Duration()
+			if end < start {
+				end = start
+			}
+			words = append(words, flatWord{Word: text, Start: start, End: end})
+		}
+		if len(words) > 0 {
+			return words, nil
+		}
+	}
+	return nil, fmt.Errorf("unsupported go-whisper JSON shape")
+}
+
+func flattenGoWhisperSegments(segments []goWhisperSegment) []flatWord {
+	words := make([]flatWord, 0, 128)
+	for _, seg := range segments {
+		if len(seg.Words) > 0 {
+			for _, w := range seg.Words {
+				text := strings.TrimSpace(w.Word)
+				if text == "" {
+					text = strings.TrimSpace(w.Text)
+				}
+				if text == "" {
+					continue
+				}
+				start := w.Start.Duration()
+				end := w.End.Duration()
+				if end < start {
+					end = start
+				}
+				words = append(words, flatWord{Word: text, Start: start, End: end})
+			}
+			continue
+		}
+		segWords := strings.Fields(strings.TrimSpace(seg.Text))
+		if len(segWords) == 0 {
+			continue
+		}
+		start := seg.Start.Duration()
+		end := seg.End.Duration()
+		if end <= start {
+			end = start + 300*time.Millisecond
+		}
+		step := (end - start) / time.Duration(len(segWords))
+		if step <= 0 {
+			step = 80 * time.Millisecond
+		}
+		cursor := start
+		for i, word := range segWords {
+			wStart := cursor
+			wEnd := wStart + step
+			if i == len(segWords)-1 || wEnd > end {
+				wEnd = end
+			}
+			if wEnd < wStart {
+				wEnd = wStart
+			}
+			words = append(words, flatWord{Word: word, Start: wStart, End: wEnd})
+			cursor = wEnd
+		}
+	}
+	return words
+}
+
+func parseGoWhisperTime(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	if f, err := strconv.ParseFloat(value, 64); err == nil {
+		return time.Duration(f * float64(time.Second)), nil
+	}
+	parts := strings.Split(value, ":")
+	if len(parts) == 3 {
+		h, errH := strconv.ParseFloat(parts[0], 64)
+		m, errM := strconv.ParseFloat(parts[1], 64)
+		s, errS := strconv.ParseFloat(parts[2], 64)
+		if errH == nil && errM == nil && errS == nil {
+			total := h*3600 + m*60 + s
+			return time.Duration(total * float64(time.Second)), nil
+		}
+	}
+	return 0, fmt.Errorf("invalid go-whisper timestamp: %s", value)
+}
+
+func runGoWhisper(ctx context.Context, cmd string, args []string, addr string) ([]byte, error) {
+	c := exec.CommandContext(ctx, cmd, args...)
+	if strings.TrimSpace(addr) != "" {
+		c.Env = append(os.Environ(), "GOWHISPER_ADDR="+strings.TrimSpace(addr))
+	}
+	var output bytes.Buffer
+	c.Stdout = &output
+	c.Stderr = &output
+	if err := c.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		msg := strings.TrimSpace(output.String())
+		if strings.Contains(strings.ToLower(msg), "connection refused") {
+			return nil, fmt.Errorf("go-whisper server unavailable (%s). Start go-whisper server or set audio.go_whisper_addr correctly", msg)
+		}
+		return nil, fmt.Errorf("go-whisper failed: %w: %s", err, msg)
+	}
+	jsonBlob, err := extractFirstJSON(output.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("go-whisper output does not contain JSON: %w", err)
+	}
+	return jsonBlob, nil
+}
+
+func extractFirstJSON(raw []byte) ([]byte, error) {
+	data := bytes.TrimSpace(raw)
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty output")
+	}
+	if json.Valid(data) {
+		return data, nil
+	}
+	for i, b := range data {
+		if b != '{' && b != '[' {
+			continue
+		}
+		dec := json.NewDecoder(bytes.NewReader(data[i:]))
+		var blob json.RawMessage
+		if err := dec.Decode(&blob); err != nil {
+			continue
+		}
+		blob = bytes.TrimSpace(blob)
+		if len(blob) == 0 {
+			continue
+		}
+		if json.Valid(blob) {
+			return blob, nil
+		}
+	}
+	return nil, fmt.Errorf("could not parse JSON from output: %s", strings.TrimSpace(string(data)))
 }
 
 type alignUnit struct {
@@ -716,9 +1011,16 @@ func NormalizeWord(word string) string {
 	return normalizeWord(word)
 }
 
-func runWhisper(cmd string, args []string) error {
-	c := exec.Command(cmd, args...)
-	c.Stdout = os.Stdout
-	c.Stderr = os.Stderr
-	return c.Run()
+func runWhisper(ctx context.Context, cmd string, args []string) error {
+	c := exec.CommandContext(ctx, cmd, args...)
+	var output bytes.Buffer
+	c.Stdout = &output
+	c.Stderr = &output
+	if err := c.Run(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("whisper failed: %w: %s", err, strings.TrimSpace(output.String()))
+	}
+	return nil
 }

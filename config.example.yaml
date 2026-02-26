@@ -4,11 +4,28 @@ quran_api:
     translation: en.sahih
     reciter: ar.shaatree
     timeout_sec: 10
+    use_local_db: false
+    local_db_path: ./The_Holy_Quran.db
 audio:
     cdn_base_url: https://cdn.islamic.network/quran/audio
     bitrate_kbps: 128
     max_concurrent: 3
+    whisper_workers: 2
+    stt_backend: auto      # auto|python|gowhisper
+    go_whisper_model: ggml-medium-q5_0
+    # Optional faster model for identify stage only (used before full alignment).
+    # Example on macOS: ggml-small-q5_0
+    go_whisper_identify_model: ""
+    go_whisper_remote: false
+    # go-whisper CLI typically talks to a server (default localhost:8081).
+    # Set if your server is elsewhere, e.g. localhost:8081
+    go_whisper_addr: ""
+    stt_timeout_sec: 90
     word_timing: auto     # auto|whisper|even
+    echo_reduction: false
+    # Optional ffmpeg filter chain for speech cleanup before whisper.
+    # Leave empty to use the built-in default.
+    echo_filter: ""
     pause_sensitive: true
     pause_db: -35
     pause_sec: 0.2
@@ -40,6 +57,9 @@ video:
     display_mode: sequential
     elongate: true
     renderer: ass
+    encode_preset: veryfast
+    encode_crf: 20
+    encode_threads: 0
     translation_font: "Helvetica"
     glass:
       enabled: false

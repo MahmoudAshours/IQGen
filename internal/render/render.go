@@ -64,6 +64,14 @@ func Render(ctx context.Context, input RenderInput) error {
 		args = append(args, "-stream_loop", "-1", "-i", input.BackgroundPath)
 	}
 	args = append(args, "-i", input.AudioPath)
+	preset := strings.TrimSpace(strings.ToLower(input.VideoConfig.EncodePreset))
+	if preset == "" {
+		preset = "veryfast"
+	}
+	crf := input.VideoConfig.EncodeCRF
+	if crf < 0 {
+		crf = 20
+	}
 	args = append(args,
 		"-filter_complex", filters,
 		"-map", "[v]",
@@ -71,13 +79,17 @@ func Render(ctx context.Context, input RenderInput) error {
 		"-t", durationSec,
 		"-r", "30",
 		"-c:v", "libx264",
-		"-preset", "medium",
-		"-crf", "18",
+		"-preset", preset,
+		"-crf", fmt.Sprintf("%d", crf),
 		"-c:a", "aac",
 		"-b:a", "192k",
 		"-pix_fmt", "yuv420p",
-		input.OutputPath,
+		"-movflags", "+faststart",
 	)
+	if input.VideoConfig.EncodeThreads > 0 {
+		args = append(args, "-threads", fmt.Sprintf("%d", input.VideoConfig.EncodeThreads))
+	}
+	args = append(args, input.OutputPath)
 	return ffmpeg.Run(ctx, args...)
 }
 
@@ -120,7 +132,7 @@ func buildDrawtextFilters(input RenderInput, width, height int) (string, error) 
 	textY := textYExpr(input.VideoConfig)
 
 	switch mode {
-	case "sequential", "repeat", "sequential-repeat":
+	case "sequential", "line", "lines", "line-by-line", "repeat", "sequential-repeat":
 		for idx, t := range input.Timings {
 			arabicLines := wrapText(t.Verse.Text, maxWidth, fontSize)
 			arabicLines = maybeElongateLines(input.VideoConfig, arabicLines, maxWidth, fontSize)
