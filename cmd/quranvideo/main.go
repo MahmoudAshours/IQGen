@@ -71,6 +71,9 @@ Run 'quranvideo generate -h' for generate options.`)
 func generateAudioCmd(args []string) {
 	fs := flag.NewFlagSet("generate-audio", flag.ExitOnError)
 	audioPath := fs.String("audio", "", "Recitation audio file")
+	audioYTURL := fs.String("audio-yt-url", "", "YouTube URL to download recitation audio from")
+	ytDlpCmd := fs.String("yt-dlp-cmd", "yt-dlp", "yt-dlp command path for YouTube audio download")
+	removeFatiha := fs.Bool("remove-fatiha", false, "Remove leading Al-Fatihah if present before processing")
 	expectedSurah := fs.Int("expected-surah", 0, "Optional expected surah number (1-114)")
 	surah := fs.Int("surah", 0, "Optional surah number (1-114)")
 	startAyah := fs.Int("start", 0, "Optional start ayah")
@@ -84,8 +87,11 @@ func generateAudioCmd(args []string) {
 	noBackground := fs.Bool("no-background", false, "Disable background video (solid color)")
 	_ = fs.Parse(args)
 
-	if *audioPath == "" {
-		exitWithError(fmt.Errorf("audio path is required"))
+	if strings.TrimSpace(*audioPath) == "" && strings.TrimSpace(*audioYTURL) == "" {
+		exitWithError(fmt.Errorf("either --audio or --audio-yt-url is required"))
+	}
+	if strings.TrimSpace(*audioPath) != "" && strings.TrimSpace(*audioYTURL) != "" {
+		exitWithError(fmt.Errorf("use only one of --audio or --audio-yt-url"))
 	}
 
 	cfg, created, err := loadConfig(*configPath)
@@ -102,18 +108,40 @@ func generateAudioCmd(args []string) {
 	}
 
 	ctx := context.Background()
+	inputAudioPath := strings.TrimSpace(*audioPath)
+	if strings.TrimSpace(*audioYTURL) != "" {
+		if err := utils.EnsureDir(cfg.Output.TempDir); err != nil {
+			exitWithError(err)
+		}
+		downloadPath := filepath.Join(cfg.Output.TempDir, "input_from_youtube.mp3")
+		logger.Infof("Downloading recitation audio from YouTube")
+		downloaded, err := audio.DownloadYouTubeAudio(ctx, strings.TrimSpace(*audioYTURL), downloadPath, strings.TrimSpace(*ytDlpCmd))
+		if err != nil {
+			exitWithError(err)
+		}
+		inputAudioPath = downloaded
+		logger.Infof("Using downloaded YouTube audio: %s", inputAudioPath)
+	}
+	if *removeFatiha {
+		processedPath, removed, err := maybeRemoveLeadingFatiha(ctx, inputAudioPath, cfg, logger)
+		if err != nil {
+			logger.Warnf("Al-Fatihah removal failed: %v", err)
+		} else if removed {
+			inputAudioPath = processedPath
+		}
+	}
 	var result recognize.Result
 	var precomputedWords []align.WordTiming
 	if *surah > 0 && *startAyah > 0 && *endAyah > 0 {
 		result = recognize.Result{Surah: *surah, StartAyah: *startAyah, EndAyah: *endAyah}
 		logger.Infof("Using provided recitation range: Surah %d, Ayahs %d-%d", result.Surah, result.StartAyah, result.EndAyah)
 	} else {
-		audioForIdentify := *audioPath
+		audioForIdentify := inputAudioPath
 		if cfg.Audio.EchoReduction {
 			cleanDir := filepath.Join(cfg.Output.TempDir, "whisper_clean")
 			if err := utils.EnsureDir(cleanDir); err == nil {
 				cleanPath := filepath.Join(cleanDir, "identify_input.wav")
-				if err := audio.EnhanceForSpeechRecognition(ctx, *audioPath, cleanPath, cfg.Audio.EchoFilter); err == nil {
+				if err := audio.EnhanceForSpeechRecognition(ctx, inputAudioPath, cleanPath, cfg.Audio.EchoFilter); err == nil {
 					audioForIdentify = cleanPath
 					logger.Infof("Applied echo reduction for recitation identification")
 				}
@@ -178,7 +206,7 @@ func generateAudioCmd(args []string) {
 		IncludeTranslation: *translation,
 		BackgroundPath:     *backgroundPath,
 		NoBackground:       *noBackground,
-		AudioPath:          *audioPath,
+		AudioPath:          inputAudioPath,
 	}
 	if len(precomputedWords) > 0 && !cfg.Audio.TrimSilence && !cfg.Audio.EchoReduction {
 		opts.PrecomputedWords = precomputedWords
@@ -278,12 +306,18 @@ func liveCmd(args []string) {
 func identifyCmd(args []string) {
 	fs := flag.NewFlagSet("identify", flag.ExitOnError)
 	audioPath := fs.String("audio", "", "Recitation audio file")
+	audioYTURL := fs.String("audio-yt-url", "", "YouTube URL to download recitation audio from")
+	ytDlpCmd := fs.String("yt-dlp-cmd", "yt-dlp", "yt-dlp command path for YouTube audio download")
+	removeFatiha := fs.Bool("remove-fatiha", false, "Remove leading Al-Fatihah if present before identification")
 	expectedSurah := fs.Int("expected-surah", 0, "Optional expected surah number (1-114)")
 	configPath := fs.String("config", "", "Config file path")
 	verbose := fs.Bool("verbose", false, "Enable verbose logs for this run")
 	_ = fs.Parse(args)
-	if *audioPath == "" {
-		exitWithError(fmt.Errorf("audio path is required"))
+	if strings.TrimSpace(*audioPath) == "" && strings.TrimSpace(*audioYTURL) == "" {
+		exitWithError(fmt.Errorf("either --audio or --audio-yt-url is required"))
+	}
+	if strings.TrimSpace(*audioPath) != "" && strings.TrimSpace(*audioYTURL) != "" {
+		exitWithError(fmt.Errorf("use only one of --audio or --audio-yt-url"))
 	}
 	cfg, created, err := loadConfig(*configPath)
 	if err != nil {
@@ -302,16 +336,38 @@ func identifyCmd(args []string) {
 		exitWithError(sttUnavailableError(cfg.Audio))
 	}
 	ctx := context.Background()
+	inputAudioPath := strings.TrimSpace(*audioPath)
+	if strings.TrimSpace(*audioYTURL) != "" {
+		if err := utils.EnsureDir(cfg.Output.TempDir); err != nil {
+			exitWithError(err)
+		}
+		downloadPath := filepath.Join(cfg.Output.TempDir, "identify_input_from_youtube.mp3")
+		logger.Infof("Downloading recitation audio from YouTube")
+		downloaded, err := audio.DownloadYouTubeAudio(ctx, strings.TrimSpace(*audioYTURL), downloadPath, strings.TrimSpace(*ytDlpCmd))
+		if err != nil {
+			exitWithError(err)
+		}
+		inputAudioPath = downloaded
+		logger.Infof("Using downloaded YouTube audio: %s", inputAudioPath)
+	}
+	if *removeFatiha {
+		processedPath, removed, err := maybeRemoveLeadingFatiha(ctx, inputAudioPath, cfg, logger)
+		if err != nil {
+			logger.Warnf("Al-Fatihah removal failed: %v", err)
+		} else if removed {
+			inputAudioPath = processedPath
+		}
+	}
 	matcher := recognize.Matcher{
 		Corpus:        newRecognizeCorpus(cfg.QuranAPI),
 		ExpectedSurah: *expectedSurah,
 	}
-	audioForIdentify := *audioPath
+	audioForIdentify := inputAudioPath
 	if cfg.Audio.EchoReduction {
 		cleanDir := filepath.Join(cfg.Output.TempDir, "whisper_clean")
 		if err := utils.EnsureDir(cleanDir); err == nil {
 			cleanPath := filepath.Join(cleanDir, "identify_single_input.wav")
-			if err := audio.EnhanceForSpeechRecognition(ctx, *audioPath, cleanPath, cfg.Audio.EchoFilter); err == nil {
+			if err := audio.EnhanceForSpeechRecognition(ctx, inputAudioPath, cleanPath, cfg.Audio.EchoFilter); err == nil {
 				audioForIdentify = cleanPath
 				logger.Infof("Applied echo reduction for identification")
 			}
