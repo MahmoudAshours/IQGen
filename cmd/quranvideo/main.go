@@ -78,8 +78,8 @@ func generateAudioCmd(args []string) {
 	surah := fs.Int("surah", 0, "Optional surah number (1-114)")
 	startAyah := fs.Int("start", 0, "Optional start ayah")
 	endAyah := fs.Int("end", 0, "Optional end ayah")
-	mode := fs.String("mode", "sequential", "Display mode: sequential|lines|repeat|repeat-2x2|word-by-word")
-	output := fs.String("output", "", "Output video path")
+	mode := fs.String("mode", "sequential", "Display mode: sequential|lines|repeat|repeat-2x2|word-by-word|captions")
+	output := fs.String("output", "", "Output path (video file, or .srt for captions mode)")
 	configPath := fs.String("config", "", "Config file path")
 	verbose := fs.Bool("verbose", false, "Enable verbose logs for this run")
 	translation := fs.Bool("translation", true, "Include translation overlay")
@@ -434,8 +434,8 @@ func generateCmd(args []string) {
 	fs.IntVar(&opts.Surah, "surah", 1, "Surah number (1-114)")
 	fs.IntVar(&opts.StartAyah, "start", 1, "Start ayah in surah")
 	fs.IntVar(&opts.EndAyah, "end", 1, "End ayah in surah")
-	fs.StringVar(&opts.Mode, "mode", "sequential", "Display mode: sequential|lines|word-by-word")
-	fs.StringVar(&opts.Output, "output", "", "Output video path")
+	fs.StringVar(&opts.Mode, "mode", "sequential", "Display mode: sequential|lines|word-by-word|captions")
+	fs.StringVar(&opts.Output, "output", "", "Output path (video file, or .srt for captions mode)")
 	fs.StringVar(&opts.ConfigPath, "config", "", "Config file path")
 	fs.BoolVar(&opts.IncludeTranslation, "translation", true, "Include translation overlay")
 	fs.StringVar(&opts.BackgroundPath, "background", "", "Custom background video path")
@@ -476,9 +476,19 @@ func runGenerate(opts generateOptions) error {
 		}
 	}
 
+	requestedMode := strings.ToLower(strings.TrimSpace(opts.Mode))
+	captionsOnly := isCaptionsOnlyMode(requestedMode)
 	if opts.Output == "" {
-		outputName := fmt.Sprintf("surah%d_%d-%d_%s.mp4", opts.Surah, opts.StartAyah, opts.EndAyah, strings.ReplaceAll(opts.Mode, " ", "-"))
-		opts.Output = filepath.Join(cfg.Output.Dir, outputName)
+		if captionsOnly {
+			outputName := fmt.Sprintf("surah%d_%d-%d_captions.srt", opts.Surah, opts.StartAyah, opts.EndAyah)
+			opts.Output = filepath.Join(cfg.Output.Dir, outputName)
+		} else {
+			outputName := fmt.Sprintf("surah%d_%d-%d_%s.mp4", opts.Surah, opts.StartAyah, opts.EndAyah, strings.ReplaceAll(opts.Mode, " ", "-"))
+			opts.Output = filepath.Join(cfg.Output.Dir, outputName)
+		}
+	}
+	if captionsOnly {
+		opts.Output = forceSRTExt(opts.Output)
 	}
 
 	ctx := context.Background()
@@ -560,7 +570,10 @@ func runGenerate(opts generateOptions) error {
 		return err
 	}
 	whisperAudioPath, whisperSegments := prepareWhisperInputs(ctx, audioPath, segments, tempDir, cfg.Audio, logger)
-	mode := strings.ToLower(opts.Mode)
+	mode := requestedMode
+	if captionsOnly {
+		mode = "sequential"
+	}
 	usedPrecomputedAlignment := false
 	repeatPairs := isRepeatPairsMode(mode)
 	if isRepeatMode(mode) && opts.AudioPath != "" {
@@ -623,6 +636,14 @@ func runGenerate(opts generateOptions) error {
 		} else {
 			timings = lineTimings
 		}
+	}
+	if captionsOnly {
+		logger.Infof("Writing captions only: %s", opts.Output)
+		if err := caption.WriteSRT(opts.Output, timings, opts.IncludeTranslation); err != nil {
+			return err
+		}
+		logger.Infof("Captions generated: %s", opts.Output)
+		return nil
 	}
 
 	bgPath := ""
