@@ -262,3 +262,24 @@ func TestDetectLeadingFatihaCut_NoMatch(t *testing.T) {
 		t.Fatalf("did not expect fatihah detection")
 	}
 }
+
+func TestIsCaptionsOnlyMode(t *testing.T) {
+	if !isCaptionsOnlyMode("captions") {
+		t.Fatalf("expected captions mode to be recognized")
+	}
+	if !isCaptionsOnlyMode("subtitle") {
+		t.Fatalf("expected subtitle mode to be recognized")
+	}
+	if isCaptionsOnlyMode("sequential") {
+		t.Fatalf("did not expect sequential to be captions-only mode")
+	}
+}
+
+func TestForceSRTExt(t *testing.T) {
+	if got := forceSRTExt("out/video.mp4"); got != "out/video.srt" {
+		t.Fatalf("unexpected converted path: %s", got)
+	}
+	if got := forceSRTExt("out/caption.srt"); got != "out/caption.srt" {
+		t.Fatalf("expected unchanged srt path, got: %s", got)
+	}
+}
