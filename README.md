@@ -4,7 +4,7 @@ A production‑oriented command‑line tool for generating Quran verse videos op
 
 ## Highlights
 - Fetch Quran verses (Uthmani and other editions) with full Tashkeel
-     - Optional local Quran source via `The_Holy_Quran.db`
+- Optional local Quran source via `The_Holy_Quran.db`
 - English translation overlay (optional)
 - Download recitations from Islamic Network CDN
 - Local recitation support (`generate-audio`) from file or YouTube audio
@@ -75,10 +75,11 @@ Useful flags:
 - `--mode`: `sequential|lines|word-by-word|two-by-two|repeat|repeat-2x2|captions`
 
 ### `random`
-Generate a TikTok-ready video from three uniformly selected consecutive ayahs. It uses the configured reciter, portrait video settings, translation, and background provider.
+Generate a video from a uniformly selected consecutive ayah range within one surah. It defaults to three ayahs, sequential mode, translation disabled, and the configured reciter and background settings.
 ```bash
 ./quranvideo random
 ./quranvideo random --ayahs 5
+./quranvideo random --translation
 ./quranvideo random --no-background --output output/daily-ayah.mp4
 ```
 
@@ -124,9 +125,10 @@ background:
 ### Local or YouTube
 ```bash
 ./quranvideo generate --background /path/to/video.mp4
+./quranvideo generate --background /path/to/background.png
 ./quranvideo generate --background "https://www.youtube.com/watch?v=..."
 ```
-The tool downloads only the needed duration (audio length).
+The tool downloads only the needed duration (audio length) for remote video backgrounds.
 
 Background notes:
 - Per-ayah background switching is supported in sequential mode.

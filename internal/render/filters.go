@@ -67,7 +67,7 @@ func DrawtextArgs(textFile string, enable string, cfg config.VideoConfig, fontSi
 		fmt.Sprintf("y=%s", yExpr),
 	}
 	if alphaExpr != "" {
-		args = append(args, fmt.Sprintf("alpha=%s", alphaExpr))
+		args = append(args, fmt.Sprintf("alpha='%s'", escapeValue(alphaExpr)))
 	}
 	if enable != "" {
 		args = append(args, fmt.Sprintf("enable='%s'", enable))
