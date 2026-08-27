@@ -169,6 +169,7 @@ func runLive(opts liveOptions) error {
 			"-c:a", "aac",
 			"-b:a", "192k",
 			"-pix_fmt", "yuv420p",
+			"-movflags", "+frag_keyframe+empty_moov",
 			opts.Output,
 		)
 	}
@@ -198,7 +199,17 @@ func runLive(opts liveOptions) error {
 		errCh <- liveAutoTextWorker(workerCtx, aligner, cfg.QuranAPI, opts.ExpectedSurah, opts.Mode, chunksDir, liveTextPath, cfg.Audio, logger)
 	}()
 
-	cmd := exec.CommandContext(context.Background(), "ffmpeg", args...)
+	captureCtx := context.Background()
+	captureCancel := func() {}
+	if opts.Duration > 0 {
+		// Live encoding can run substantially slower than realtime while Whisper is processing chunks.
+		captureCtx, captureCancel = context.WithTimeout(captureCtx, opts.Duration*2)
+	}
+	defer captureCancel()
+	cmd := exec.CommandContext(captureCtx, "ffmpeg", args...)
+	// SIGINT lets FFmpeg finish the MP4 trailer when a live source ignores its output duration.
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = 10 * time.Second
 	var stderr bytes.Buffer
 	cmd.Stdout = &stderr
 	cmd.Stderr = &stderr
@@ -210,7 +221,7 @@ func runLive(opts liveOptions) error {
 	if opts.Stream {
 		logger.Infof("Live stream output: %s (%s)", opts.StreamURL, opts.StreamFormat)
 	}
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Run(); err != nil && captureCtx.Err() != context.DeadlineExceeded {
 		cancel()
 		wg.Wait()
 		return fmt.Errorf("live capture failed: %w: %s", err, strings.TrimSpace(stderr.String()))
@@ -249,7 +260,7 @@ func liveMicInputArgs(device string) ([]string, error) {
 
 func resolveLiveAudioInputArgs(ctx context.Context, opts liveOptions) ([]string, string, error) {
 	if strings.TrimSpace(opts.AudioURL) != "" {
-		args, err := liveStreamInputArgs(opts.AudioURL)
+		args, err := liveStreamInputArgs(opts.AudioURL, opts.Duration)
 		return args, "audio-url", err
 	}
 	if strings.TrimSpace(opts.YouTubeURL) != "" {
@@ -257,24 +268,27 @@ func resolveLiveAudioInputArgs(ctx context.Context, opts liveOptions) ([]string,
 		if err != nil {
 			return nil, "", err
 		}
-		args, err := liveStreamInputArgs(streamURL)
+		args, err := liveStreamInputArgs(streamURL, opts.Duration)
 		return args, "youtube", err
 	}
 	args, err := liveMicInputArgs(opts.MicDevice)
 	return args, "mic", err
 }
 
-func liveStreamInputArgs(streamURL string) ([]string, error) {
+func liveStreamInputArgs(streamURL string, duration time.Duration) ([]string, error) {
 	u := strings.TrimSpace(streamURL)
 	if u == "" {
 		return nil, fmt.Errorf("empty stream URL")
 	}
-	return []string{
+	args := []string{
 		"-reconnect", "1",
 		"-reconnect_streamed", "1",
 		"-reconnect_delay_max", "2",
-		"-i", u,
-	}, nil
+	}
+	if duration > 0 {
+		args = append(args, "-t", fmt.Sprintf("%.3f", duration.Seconds()))
+	}
+	return append(args, "-i", u), nil
 }
 
 func liveTextYExpr(position string) string {
@@ -309,7 +323,7 @@ func liveTextWorker(ctx context.Context, aligner *align.WhisperAligner, verses [
 			finalPass = true
 		case <-ticker.C:
 		}
-		files, _ := filepath.Glob(filepath.Join(chunksDir, "chunk_*.wav"))
+		files := liveChunkFiles(chunksDir)
 		sort.Strings(files)
 		for _, f := range files {
 			if processed[f] {
@@ -417,7 +431,7 @@ func liveAutoTextWorker(
 		case <-ticker.C:
 		}
 
-		files, _ := filepath.Glob(filepath.Join(chunksDir, "chunk_*.wav"))
+		files := liveChunkFiles(chunksDir)
 		sort.Strings(files)
 		for _, f := range files {
 			if processed[f] {
@@ -540,6 +554,18 @@ func prepareChunkForWhisper(ctx context.Context, chunkPath string, cfg config.Au
 		return chunkPath
 	}
 	return cleanPath
+}
+
+func liveChunkFiles(chunksDir string) []string {
+	files, _ := filepath.Glob(filepath.Join(chunksDir, "chunk_*.wav"))
+	filtered := files[:0]
+	for _, file := range files {
+		if strings.Contains(filepath.Base(file), ".clean.wav") {
+			continue
+		}
+		filtered = append(filtered, file)
+	}
+	return filtered
 }
 
 func hasNonQuranPromoTokens(tokens []string) bool {

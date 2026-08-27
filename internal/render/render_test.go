@@ -26,3 +26,14 @@ func TestFadeAlphaExprEnabled(t *testing.T) {
 		t.Fatalf("expected alpha expr")
 	}
 }
+
+func TestIsImagePath(t *testing.T) {
+	for _, path := range []string{"background.jpg", "background.JPEG", "background.png", "background.webp"} {
+		if !isImagePath(path) {
+			t.Fatalf("expected image path: %s", path)
+		}
+	}
+	if isImagePath("background.mp4") {
+		t.Fatal("did not expect video path to be an image")
+	}
+}

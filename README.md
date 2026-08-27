@@ -2,11 +2,9 @@
 
 A production‑oriented command‑line tool for generating Quran verse videos optimized for TikTok, YouTube Shorts, and Instagram Reels. It automates verse retrieval, recitation download, background selection, and FFmpeg rendering with Arabic‑friendly text handling.
 
-![alt text](image.png)
-
 ## Highlights
 - Fetch Quran verses (Uthmani and other editions) with full Tashkeel
-- Optional local Quran source via `The_Holy_Quran.db`
+     - Optional local Quran source via `The_Holy_Quran.db`
 - English translation overlay (optional)
 - Download recitations from Islamic Network CDN
 - Local recitation support (`generate-audio`) from file or YouTube audio
@@ -41,6 +39,7 @@ go build -o quranvideo ./cmd/quranvideo
 ## Quick Start
 ```bash
 ./quranvideo generate -surah 1 -start 1 -end 7 -mode sequential
+./quranvideo random
 ./quranvideo identify --audio recitation.mp3
 ./quranvideo generate-audio --audio recitation.mp3
 ./quranvideo generate-audio --audio recitation.mp3 --remove-fatiha --mode word
@@ -74,6 +73,14 @@ Useful flags:
 - `--surah --start --end`: skip recognition and force the ayah range
 - `--remove-fatiha`: remove leading Al-Fatihah + Ameen and any pre-recitation gap
 - `--mode`: `sequential|lines|word-by-word|two-by-two|repeat|repeat-2x2|captions`
+
+### `random`
+Generate a TikTok-ready video from three uniformly selected consecutive ayahs. It uses the configured reciter, portrait video settings, translation, and background provider.
+```bash
+./quranvideo random
+./quranvideo random --ayahs 5
+./quranvideo random --no-background --output output/daily-ayah.mp4
+```
 
 ### `identify`
 Detect surah + ayah range from a recitation file.

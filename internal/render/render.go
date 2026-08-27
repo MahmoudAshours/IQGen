@@ -60,6 +60,8 @@ func Render(ctx context.Context, input RenderInput) error {
 		}
 		colorSrc := fmt.Sprintf("color=c=%s:s=%dx%d:d=%s", color, width, height, durationSec)
 		args = append(args, "-f", "lavfi", "-i", colorSrc)
+	} else if isImagePath(input.BackgroundPath) {
+		args = append(args, "-loop", "1", "-framerate", "30", "-i", input.BackgroundPath)
 	} else {
 		args = append(args, "-stream_loop", "-1", "-i", input.BackgroundPath)
 	}
@@ -91,6 +93,15 @@ func Render(ctx context.Context, input RenderInput) error {
 	}
 	args = append(args, input.OutputPath)
 	return ffmpeg.Run(ctx, args...)
+}
+
+func isImagePath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".jpg", ".jpeg", ".png", ".webp":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildFilters(input RenderInput, width, height int) (string, error) {
@@ -134,7 +145,7 @@ func buildDrawtextFilters(input RenderInput, width, height int) (string, error) 
 	switch mode {
 	case "sequential", "line", "lines", "line-by-line", "repeat", "sequential-repeat":
 		for idx, t := range input.Timings {
-			arabicLines := wrapText(t.Verse.Text, maxWidth, fontSize)
+			arabicLines := wrapText(withAyahBrackets(input.VideoConfig, t.Verse.Text), maxWidth, fontSize)
 			arabicLines = maybeElongateLines(input.VideoConfig, arabicLines, maxWidth, fontSize)
 			textFile, err := writeTextFile(input.TempDir, fmt.Sprintf("ayah_%d.txt", idx), strings.Join(arabicLines, "\n"))
 			if err != nil {
@@ -143,8 +154,9 @@ func buildDrawtextFilters(input RenderInput, width, height int) (string, error) 
 			enable := fmt.Sprintf("between(t,%.3f,%.3f)", t.Start.Seconds(), t.End.Seconds())
 			fade := fadeAlphaExpr(input.VideoConfig, t.Start, t.End)
 			filters = append(filters, DrawtextArgs(textFile, enable, input.VideoConfig, fontSize, input.VideoConfig.Font.Color, textY, fade))
-			if input.IncludeTranslation && t.Verse.Translation != "" {
-				transLines := wrapText(t.Verse.Translation, maxWidth, fontSize/2)
+			translation := sanitizeTranslation(t.Verse.Translation)
+			if input.IncludeTranslation && translation != "" {
+				transLines := wrapText(translation, maxWidth, fontSize/2)
 				transFile, err := writeTextFile(input.TempDir, fmt.Sprintf("translation_%d.txt", idx), strings.Join(transLines, "\n"))
 				if err != nil {
 					return "", err
@@ -172,7 +184,7 @@ func buildDrawtextFilters(input RenderInput, width, height int) (string, error) 
 					if pair.End <= pair.Start || strings.TrimSpace(pair.Text) == "" {
 						continue
 					}
-					text := sanitizeText(pair.Text)
+					text := withAyahBrackets(input.VideoConfig, pair.Text)
 					if input.VideoConfig.Elongate {
 						text = elongateText(text, input.VideoConfig.ElongateCount)
 					}
@@ -186,7 +198,7 @@ func buildDrawtextFilters(input RenderInput, width, height int) (string, error) 
 				}
 			} else {
 				for widx, w := range t.WordTimings {
-					word := sanitizeText(w.Word)
+					word := withAyahBrackets(input.VideoConfig, w.Word)
 					if input.VideoConfig.Elongate {
 						word = elongateText(word, input.VideoConfig.ElongateCount)
 					}

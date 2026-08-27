@@ -180,6 +180,8 @@ func everyAyahReciterFolder(reciter string) string {
 		return "Husary_128kbps"
 	case "ar.muhammadjibreel":
 		return "Muhammad_Jibreel_128kbps"
+	case "ar.yasseraldosari":
+		return "Yasser_Ad-Dussary_128kbps"
 	case "ar.abdurrahmaansudais":
 		return "Abdurrahmaan_As-Sudais_192kbps"
 	default:

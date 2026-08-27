@@ -104,3 +104,11 @@ func TestMaxTextWidthKeepsSmallerCustomMargins(t *testing.T) {
 		t.Fatalf("expected %d, got %d", want, got)
 	}
 }
+
+func TestSanitizeTranslationRemovesFootnoteMarkers(t *testing.T) {
+	for _, input := range []string{"before [{11}] after", "before {[1]} after"} {
+		if got := sanitizeTranslation(input); got != "before after" {
+			t.Fatalf("unexpected cleaned translation: %q", got)
+		}
+	}
+}

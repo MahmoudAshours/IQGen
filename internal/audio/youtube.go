@@ -33,6 +33,7 @@ func DownloadYouTubeAudio(ctx context.Context, videoURL, destPath, ytDlpCmd stri
 	args := []string{
 		"-f", "bestaudio/best",
 		"--no-playlist",
+		"--force-overwrites",
 		"-x",
 		"--audio-format", "mp3",
 		"--audio-quality", "0",

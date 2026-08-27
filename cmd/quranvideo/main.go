@@ -18,6 +18,7 @@ import (
 	"qgencodex/internal/caption"
 	"qgencodex/internal/config"
 	"qgencodex/internal/ffmpeg"
+	"qgencodex/internal/quran"
 	"qgencodex/internal/recognize"
 	"qgencodex/internal/render"
 	"qgencodex/internal/utils"
@@ -36,6 +37,8 @@ func main() {
 		generateCmd(os.Args[2:])
 	case "generate-audio":
 		generateAudioCmd(os.Args[2:])
+	case "random":
+		randomCmd(os.Args[2:])
 	case "live":
 		liveCmd(os.Args[2:])
 	case "identify":
@@ -55,8 +58,9 @@ func usage() {
 	fmt.Println(`Quran Video CLI
 
 Usage:
-  quranvideo generate [options]
-  quranvideo generate-audio --audio recitation.mp3
+	quranvideo generate [options]
+	quranvideo generate-audio --audio recitation.mp3
+	quranvideo random
   quranvideo live --surah 1 --start 1 --end 7 --mode full
   quranvideo live --yt-url https://www.youtube.com/watch?v=XXXX --stream --stream-url udp://127.0.0.1:23000
   quranvideo live --yt-url https://www.youtube.com/watch?v=XXXX --mode full --duration 120
@@ -447,6 +451,32 @@ func generateCmd(args []string) {
 	}
 }
 
+func randomCmd(args []string) {
+	fs := flag.NewFlagSet("random", flag.ExitOnError)
+	opts := generateOptions{Mode: "sequential", IncludeTranslation: false}
+	ayahCount := fs.Int("ayahs", 3, "Number of consecutive ayahs to generate")
+	fs.StringVar(&opts.Mode, "mode", "sequential", "Display mode: sequential|lines|word-by-word|captions")
+	fs.StringVar(&opts.Output, "output", "", "Output video path")
+	fs.StringVar(&opts.ConfigPath, "config", "", "Config file path")
+	fs.BoolVar(&opts.IncludeTranslation, "translation", false, "Include translation overlay")
+	fs.StringVar(&opts.BackgroundPath, "background", "", "Custom background video path")
+	fs.BoolVar(&opts.NoBackground, "no-background", false, "Disable background video (solid color)")
+	_ = fs.Parse(args)
+
+	surah, startAyah, endAyah, err := quran.RandomAyahRange(*ayahCount)
+	if err != nil {
+		exitWithError(err)
+	}
+	opts.Surah = surah
+	opts.StartAyah = startAyah
+	opts.EndAyah = endAyah
+	fmt.Printf("Selected random ayahs: Surah %d, Ayahs %d-%d\n", surah, startAyah, endAyah)
+
+	if err := runGenerate(opts); err != nil {
+		exitWithError(err)
+	}
+}
+
 func runGenerate(opts generateOptions) error {
 	cfg, created, err := loadConfig(opts.ConfigPath)
 	if err != nil {
@@ -602,7 +632,11 @@ func runGenerate(opts generateOptions) error {
 		}
 	}
 	if isWordMode(mode) || isLinesMode(mode) || repeatPairs {
+		// Full-audio alignment supplies more accurate ayah boundaries than the initial estimate.
+		// Apply them before normalizing word timings so valid timestamps are not clamped away.
+		applyAyahBoundariesFromWordTimings(timings)
 		normalizeWordTimings(timings)
+		repairCompressedVerseWordTimings(timings)
 	}
 	if opts.AudioPath != "" && mode == "sequential" {
 		aligned := usedPrecomputedAlignment

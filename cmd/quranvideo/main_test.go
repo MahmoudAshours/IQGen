@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -281,5 +282,80 @@ func TestForceSRTExt(t *testing.T) {
 	}
 	if got := forceSRTExt("out/caption.srt"); got != "out/caption.srt" {
 		t.Fatalf("expected unchanged srt path, got: %s", got)
+	}
+}
+
+func TestLiveChunkFilesExcludesDerivedCleanAudio(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"chunk_00000.wav", "chunk_00000.wav.clean.wav", "chunk_00001.wav"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+			t.Fatalf("write chunk fixture: %v", err)
+		}
+	}
+	files := liveChunkFiles(dir)
+	if len(files) != 2 {
+		t.Fatalf("expected 2 source chunks, got %v", files)
+	}
+}
+
+func TestLiveStreamInputArgsLimitsInputDuration(t *testing.T) {
+	args, err := liveStreamInputArgs("https://example.com/live.m3u8", 45*time.Second)
+	if err != nil {
+		t.Fatalf("liveStreamInputArgs failed: %v", err)
+	}
+	if got := strings.Join(args, " "); !strings.Contains(got, "-t 45.000 -i https://example.com/live.m3u8") {
+		t.Fatalf("expected duration before input, got %q", got)
+	}
+}
+
+func TestRepairCompressedVerseWordTimings(t *testing.T) {
+	timings := []render.Timing{
+		{
+			WordTimings: []render.WordTiming{
+				{Word: "a", Start: 10 * time.Second, End: 10*time.Second + 100*time.Millisecond},
+				{Word: "b", Start: 10*time.Second + 100*time.Millisecond, End: 10*time.Second + 200*time.Millisecond},
+				{Word: "c", Start: 10*time.Second + 200*time.Millisecond, End: 10*time.Second + 300*time.Millisecond},
+			},
+		},
+		{
+			WordTimings: []render.WordTiming{{Word: "d", Start: 12 * time.Second, End: 13 * time.Second}},
+		},
+	}
+
+	repairCompressedVerseWordTimings(timings)
+
+	words := timings[0].WordTimings
+	if words[0].Start != 10*time.Second || words[len(words)-1].End != 12*time.Second {
+		t.Fatalf("expected compressed verse to fill 10s-12s, got %s-%s", words[0].Start, words[len(words)-1].End)
+	}
+	if timings[0].End != 12*time.Second {
+		t.Fatalf("expected verse end to match following ayah, got %s", timings[0].End)
+	}
+}
+
+func TestApplyAyahBoundariesBeforeNormalizingWordTimings(t *testing.T) {
+	timings := []render.Timing{
+		{
+			Start: 0,
+			End:   31 * time.Second,
+			WordTimings: []render.WordTiming{
+				{Word: "previous", Start: 30 * time.Second, End: 31 * time.Second},
+			},
+		},
+		{
+			Start: 38 * time.Second,
+			End:   45 * time.Second,
+			WordTimings: []render.WordTiming{
+				{Word: "وَيُحِقُّ", Start: 31 * time.Second, End: 32 * time.Second},
+				{Word: "اللَّهُ", Start: 32 * time.Second, End: 33 * time.Second},
+			},
+		},
+	}
+
+	applyAyahBoundariesFromWordTimings(timings)
+	normalizeWordTimings(timings)
+
+	if got := timings[1].WordTimings[0].Start; got != 31*time.Second {
+		t.Fatalf("expected Whisper timestamp to remain at 31s, got %s", got)
 	}
 }

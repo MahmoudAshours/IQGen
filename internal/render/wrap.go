@@ -1,11 +1,14 @@
 package render
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 
 	"qgencodex/internal/config"
 )
+
+var translationFootnotePattern = regexp.MustCompile(`(?:\[\{\d+\}\]|\{?\[\d+\]\}?)`)
 
 const (
 	wrapThreshold = 0.98
@@ -213,6 +216,11 @@ func isCombining(r rune) bool {
 
 func sanitizeText(text string) string {
 	return strings.TrimPrefix(text, "\ufeff")
+}
+
+func sanitizeTranslation(text string) string {
+	text = translationFootnotePattern.ReplaceAllString(sanitizeText(text), "")
+	return strings.Join(strings.Fields(text), " ")
 }
 
 func normalizedElongateCount(count int) int {

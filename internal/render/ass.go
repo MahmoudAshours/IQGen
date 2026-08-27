@@ -96,7 +96,7 @@ func buildASSLines(opts assOptions, fontSize int) []string {
 			if mode == "two-by-two" || mode == "two" || mode == "pair" || mode == "2x2" || mode == "repeat-2x2" || mode == "repeat-two-by-two" || mode == "repeat-pair" {
 				pairs := buildWordPairs(t)
 				for _, pair := range pairs {
-					text := pair.Text
+					text := withAyahBrackets(opts.Config, pair.Text)
 					if opts.Config.Elongate {
 						text = elongateText(text, opts.Config.ElongateCount)
 					}
@@ -105,7 +105,7 @@ func buildASSLines(opts assOptions, fontSize int) []string {
 				}
 			} else {
 				for _, w := range t.WordTimings {
-					text := w.Word
+					text := withAyahBrackets(opts.Config, w.Word)
 					if opts.Config.Elongate {
 						text = elongateText(text, opts.Config.ElongateCount)
 					}
@@ -124,13 +124,14 @@ func assDialogue(start, end time.Duration, override, text string) string {
 
 func assVerseText(cfg config.VideoConfig, maxWidth int, arabic, translation string, includeTranslation bool, fontSize int) string {
 	arabicFont := assArabicFontName(cfg)
-	arabicLines := wrapText(arabic, maxWidth, fontSize)
+	arabicLines := wrapText(withAyahBrackets(cfg, arabic), maxWidth, fontSize)
 	arabicLines = maybeElongateLines(cfg, arabicLines, maxWidth, fontSize)
 	arabicParts := make([]string, 0, len(arabicLines))
 	for _, line := range arabicLines {
 		arabicParts = append(arabicParts, assFontOverride(arabicFont)+escapeASSText(line))
 	}
 	text := strings.Join(arabicParts, "\\N")
+	translation = sanitizeTranslation(translation)
 	if includeTranslation && translation != "" {
 		small := fontSize / 2
 		if small < 20 {
@@ -154,6 +155,17 @@ func assVerseText(cfg config.VideoConfig, maxWidth int, arabic, translation stri
 		text = fmt.Sprintf("%s%s%s{\\fs%d}", text, gap, translationText, fontSize)
 	}
 	return text
+}
+
+func withAyahBrackets(cfg config.VideoConfig, text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	if strings.Contains(strings.ToLower(cfg.Font.Family), "cairo") {
+		return text
+	}
+	return "﴾ " + text + " ﴿"
 }
 
 func escapeASSText(text string) string {

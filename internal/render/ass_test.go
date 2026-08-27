@@ -52,6 +52,18 @@ func TestASSFadeOverride(t *testing.T) {
 	}
 }
 
+func TestWithAyahBrackets(t *testing.T) {
+	if got := withAyahBrackets(config.VideoConfig{}, "بسم الله"); got != "﴾ بسم الله ﴿" {
+		t.Fatalf("unexpected bracketed ayah: %q", got)
+	}
+	if got := withAyahBrackets(config.VideoConfig{}, " "); got != "" {
+		t.Fatalf("expected empty ayah to remain empty, got %q", got)
+	}
+	if got := withAyahBrackets(config.VideoConfig{Font: config.FontConfig{Family: "Cairo Light"}}, "بسم الله"); got != "بسم الله" {
+		t.Fatalf("unexpected Cairo ayah: %q", got)
+	}
+}
+
 func TestBuildASSContentLinesMode(t *testing.T) {
 	cfg := config.Default().Video
 	cfg.Font.Family = "Amiri Quran"

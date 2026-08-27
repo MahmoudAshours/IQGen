@@ -2,16 +2,34 @@ package quran
 
 import (
 	"context"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
 
 func TestDBClientFetchVerses_LocalFile(t *testing.T) {
-	dbPath := filepath.Join("..", "..", "The_Holy_Quran.db")
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 is required for local DB tests")
+	}
+
+	dbPath := filepath.Join(t.TempDir(), "quran.db")
+	schema := `
+CREATE TABLE TB_Surah (ID INTEGER, name TEXT, englishName TEXT, englishNameTranslation TEXT, revelationType TEXT);
+CREATE TABLE TB_Quran (TranslationID INTEGER, SuraID INTEGER, AyahID INTEGER, AyahText TEXT);
+INSERT INTO TB_Surah VALUES (1, 'Al-Fatiha', 'The Opening', 'The Opening', 'Meccan');
+INSERT INTO TB_Quran VALUES (1, 1, 1, 'Arabic verse one');
+INSERT INTO TB_Quran VALUES (1, 1, 2, 'Arabic verse two');
+INSERT INTO TB_Quran VALUES (17, 1, 1, 'English verse one');
+INSERT INTO TB_Quran VALUES (17, 1, 2, 'English verse two');
+`
+	if out, err := exec.Command("sqlite3", dbPath, schema).CombinedOutput(); err != nil {
+		t.Fatalf("create test database: %v: %s", err, out)
+	}
+
 	client := NewDBClient(dbPath)
 	verses, err := client.FetchVerses(context.Background(), 1, 1, 2, "quran-uthmani", "en.sahih")
 	if err != nil {
-		t.Skipf("skipping local DB test: %v", err)
+		t.Fatalf("fetch local verses: %v", err)
 	}
 	if len(verses) != 2 {
 		t.Fatalf("expected 2 verses, got %d", len(verses))

@@ -718,6 +718,36 @@ func normalizeWordTimings(timings []render.Timing) {
 	}
 }
 
+func repairCompressedVerseWordTimings(timings []render.Timing) {
+	const minWordDuration = 250 * time.Millisecond
+	for i := 0; i+1 < len(timings); i++ {
+		words := timings[i].WordTimings
+		nextWords := timings[i+1].WordTimings
+		if len(words) == 0 || len(nextWords) == 0 {
+			continue
+		}
+		start := words[0].Start
+		observedEnd := words[len(words)-1].End
+		nextStart := nextWords[0].Start
+		minimum := time.Duration(len(words)) * minWordDuration
+		if observedEnd-start >= minimum || nextStart-start < minimum {
+			continue
+		}
+		// Whisper occasionally collapses a full ayah into a fraction of a second.
+		// Spread it over the reliable boundary supplied by the following ayah.
+		timings[i].WordTimings = evenSplitWordTimings(wordTexts(words), start, nextStart)
+		timings[i].End = nextStart
+	}
+}
+
+func wordTexts(words []render.WordTiming) []string {
+	text := make([]string, len(words))
+	for i, word := range words {
+		text[i] = word.Word
+	}
+	return text
+}
+
 func collapseStandaloneMarks(words []render.WordTiming) []render.WordTiming {
 	if len(words) == 0 {
 		return words
@@ -970,7 +1000,13 @@ func resolveBackgroundInput(ctx context.Context, inputPath, tempDir string, time
 			ext = ".mp4"
 		}
 		dest := filepath.Join(tempDir, "background_url"+ext)
-		if duration > 0 {
+		if isImageExtension(ext) {
+			client := utils.HTTPClient(timeout)
+			logger.Infof("Downloading background image")
+			if err := utils.DownloadFile(ctx, client, inputPath, nil, dest); err != nil {
+				return "", err
+			}
+		} else if duration > 0 {
 			logger.Infof("Downloading background URL segment")
 			if err := background.DownloadURLSegment(ctx, inputPath, dest, duration); err != nil {
 				return "", err
@@ -988,6 +1024,15 @@ func resolveBackgroundInput(ctx context.Context, inputPath, tempDir string, time
 		return "", fmt.Errorf("background file not found: %s", inputPath)
 	}
 	return inputPath, nil
+}
+
+func isImageExtension(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".jpg", ".jpeg", ".png", ".webp":
+		return true
+	default:
+		return false
+	}
 }
 
 func isURL(value string) bool {

@@ -19,7 +19,11 @@ func TestDownloadYouTubeAudioWithStubCommand(t *testing.T) {
 	cmdPath := filepath.Join(dir, "yt-dlp-stub.sh")
 	script := `#!/bin/sh
 out=""
+force_overwrites=0
 while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--force-overwrites" ]; then
+    force_overwrites=1
+  fi
   if [ "$1" = "-o" ]; then
     out="$2"
     shift 2
@@ -27,6 +31,9 @@ while [ "$#" -gt 0 ]; do
   fi
   shift
 done
+if [ "$force_overwrites" -ne 1 ]; then
+  exit 1
+fi
 outfile=$(printf "%s" "$out" | sed 's/%(ext)s/mp3/g')
 echo "audio" > "$outfile"
 `

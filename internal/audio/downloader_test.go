@@ -37,6 +37,11 @@ func TestEveryAyahURLForReciter(t *testing.T) {
 	if got != want {
 		t.Fatalf("unexpected URL: got %q want %q", got, want)
 	}
+	got = everyAyahURLForReciter("ar.yasseraldosari", 20, 43)
+	want = "https://everyayah.com/data/Yasser_Ad-Dussary_128kbps/020043.mp3"
+	if got != want {
+		t.Fatalf("unexpected Yasser Al-Dosari URL: got %q want %q", got, want)
+	}
 	if everyAyahURLForReciter("ar.unknown", 2, 1) != "" {
 		t.Fatalf("unknown reciter should return empty URL")
 	}
